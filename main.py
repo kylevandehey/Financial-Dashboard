@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Monarch Money Dashboard", layout="wide")
 
-st.title("\ud83d\udcca Monarch Money Dashboard")
+st.title("📊 Monarch Money Dashboard")
 
 # Upload section
 uploaded_file = st.file_uploader("Upload your Monarch transactions CSV", type="csv")
