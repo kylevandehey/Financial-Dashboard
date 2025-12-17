@@ -59,12 +59,25 @@ with tab1:
             cat_vol = df_txn[df_txn['Amount'] < 0].groupby('Category')['Amount'].std().dropna()
             st.bar_chart(cat_vol)
 
-        # Recurring Expense Detection
-        st.subheader("♻️ Detected Recurring Expenses")
-        recurring = df_txn.groupby(['Description', df_txn['Date'].dt.to_period('M')]).size().unstack().fillna(0)
-        recurring['Recurring Count'] = (recurring > 0).sum(axis=1)
-        recurring_expenses = recurring[recurring['Recurring Count'] >= 3].sort_values('Recurring Count', ascending=False)
-        st.dataframe(recurring_expenses[['Recurring Count']])
+       # Recurring Expense Detection
+st.subheader("♻️ Detected Recurring Expenses")
+
+# Try to find a good column for grouping recurring transactions
+grouping_col = None
+for col_option in ['Description', 'Payee', 'Merchant', 'Account Name']:
+    if col_option in df_txn.columns:
+        grouping_col = col_option
+        break
+
+if grouping_col:
+    recurring = df_txn.groupby([grouping_col, df_txn['Date'].dt.to_period('M')]).size().unstack().fillna(0)
+    recurring['Recurring Count'] = (recurring > 0).sum(axis=1)
+    recurring_expenses = recurring[recurring['Recurring Count'] >= 3].sort_values('Recurring Count', ascending=False)
+
+    st.markdown(f"Using **{grouping_col}** to detect recurring expenses.")
+    st.dataframe(recurring_expenses[['Recurring Count']])
+else:
+    st.warning("No suitable column found (like 'Description', 'Payee', or 'Account Name') to detect recurring expenses.")
 
         # Full Transaction Table
         st.subheader("📃 All Transactions")
