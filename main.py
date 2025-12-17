@@ -33,17 +33,17 @@ if uploaded_file:
     monthly_cf = df.groupby('Month')['Amount'].sum().reset_index()
     monthly_cf['Month'] = monthly_cf['Month'].astype(str)
 
-    st.subheader("\ud83d\udcc8 Monthly Cash Flow")
+    st.subheader("📈 Monthly Cash Flow")
     st.line_chart(monthly_cf.set_index('Month')['Amount'])
 
     # Category breakdown
     if 'Category' in df.columns:
-        st.subheader("\ud83e\uddfe Spending by Category")
+        st.subheader("🛍️ Spending by Category")
         category_totals = df[df['Amount'] < 0].groupby('Category')['Amount'].sum().sort_values()
         st.bar_chart(category_totals)
 
     # Show full table
-    st.subheader("\ud83d\uddc3\ufe0f All Transactions")
+    st.subheader("📃 All Transactions")
     st.dataframe(df.sort_values('Date', ascending=False))
 else:
     st.info("Upload a CSV file to get started.")
