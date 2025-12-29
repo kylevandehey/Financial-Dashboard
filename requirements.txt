@@ -6,4 +6,6 @@ python-dateutil
 openai
 altair
 seaborn
-
+streamlit-extras
+streamlit-option-menu
+streamlit-toggle-switch
