@@ -1,174 +1,134 @@
-# main.py — Monarch+ Dashboard (Full Feature Build)
-
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
-import matplotlib.pyplot as plt
-import seaborn as sns
-import altair as alt
-import hashlib
 from datetime import datetime
-from sklearn.metrics import pairwise_distances_argmin_min
-from dateutil import parser
-from streamlit_extras.metric_cards import style_metric_cards
 
-# -------------------------------
-# SESSION STATE INIT
-# -------------------------------
+# -----------------------------
+# Placeholder: Optional Auth UI (not enforced)
+# -----------------------------
+st.sidebar.subheader("🔐 User Login (Coming Soon)")
+st.sidebar.text_input("Username", disabled=True)
+st.sidebar.text_input("Password", type="password", disabled=True)
+st.sidebar.markdown("<i>Authentication not required yet.</i>", unsafe_allow_html=True)
+
+# -----------------------------
+# Session State Initialization
+# -----------------------------
 if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = {}
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
 
-# -------------------------------
-# AUTHENTICATION LAYER (SIMPLE)
-# -------------------------------
-def login():
-    with st.sidebar:
-        st.markdown("### 🔐 Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if username == "demo" and password == "pass":
-                st.session_state.authenticated = True
-            else:
-                st.error("Invalid credentials")
+# -----------------------------
+# App Title & Tabs
+# -----------------------------
+st.set_page_config(layout="wide")
+st.title("📊 Monarch+ Dashboard")
+tabs = st.tabs(["Dashboard", "Transactions", "Insights", "Loan Tracker", "Loan Calculator", "Assistant"])
 
-def hash_string(s):
-    return hashlib.sha256(s.encode()).hexdigest()
+# -----------------------------
+# File Uploads (Dashboard Tab)
+# -----------------------------
+with tabs[0]:
+    st.subheader("Upload Transactions CSV")
+    transactions_file = st.file_uploader("Upload transactions CSV", type="csv", key="transactions")
 
-if not st.session_state.authenticated:
-    login()
-    st.stop()
+    st.subheader("Upload Accounts CSV")
+    accounts_file = st.file_uploader("Upload accounts/balances CSV", type="csv", key="accounts")
 
-# -------------------------------
-# LOAD CSVs
-# -------------------------------
-def load_csv(file):
-    try:
-        return pd.read_csv(file)
-    except Exception:
-        return pd.DataFrame()
+    if transactions_file:
+        transactions_df = pd.read_csv(transactions_file)
+        st.session_state.uploaded_files['transactions'] = transactions_df
 
-def summarize_balance_sheet(df):
-    try:
-        df.columns = df.columns.str.strip().str.lower()
-        assets = df[df['type'].str.lower() == 'asset']['balance'].sum()
-        liabilities = df[df['type'].str.lower() == 'liability']['balance'].sum()
-        equity = df[df['type'].str.lower() == 'equity']['balance'].sum()
-        return assets, liabilities, equity
-    except:
-        return 0, 0, 0
+    if accounts_file:
+        accounts_df = pd.read_csv(accounts_file)
+        st.session_state.uploaded_files['accounts'] = accounts_df
 
-@st.cache_data
+    # Show metadata insights (only if uploaded)
+    if 'transactions' in st.session_state.uploaded_files:
+        df = st.session_state.uploaded_files['transactions']
+        st.markdown("### 📅 High-Level Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Transactions", len(df))
+        with col2:
+            st.metric("First Transaction", df['Date'].min())
+        with col3:
+            st.metric("Last Transaction", df['Date'].max())
 
-def detect_recurring(df, col='Description'):
-    df['Recurring'] = df[col].duplicated(keep=False)
-    return df
+    if 'accounts' in st.session_state.uploaded_files:
+        acc = st.session_state.uploaded_files['accounts']
+        if 'Type' in acc.columns and 'Balance' in acc.columns:
+            total_assets = acc[acc['Type'].str.lower() == 'asset']['Balance'].sum()
+            total_liabilities = acc[acc['Type'].str.lower() == 'liability']['Balance'].sum()
+            total_equity = total_assets - total_liabilities
+            st.markdown("### 💰 Balance Sheet Snapshot")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Assets", f"${total_assets:,.2f}")
+            col2.metric("Liabilities", f"${total_liabilities:,.2f}")
+            col3.metric("Equity", f"${total_equity:,.2f}")
+        else:
+            st.warning("⚠️ Account CSV missing required columns: 'Type', 'Balance'")
 
-# -------------------------------
-# DASHBOARD STARTS
-# -------------------------------
-st.set_page_config("Monarch+ Dashboard", layout="wide")
-st.title("🏠 Monarch+ Dashboard")
+# -----------------------------
+# Transactions Tab: Filters + Summaries
+# -----------------------------
+with tabs[1]:
+    st.subheader("📂 Transactions Explorer")
 
-# -------------------------------
-# Uploads
-# -------------------------------
-transactions_file = st.file_uploader("Upload Transactions CSV", type="csv", key="trans")
-accounts_file = st.file_uploader("Upload Accounts CSV", type="csv", key="acc")
+    if 'transactions' in st.session_state.uploaded_files:
+        df = st.session_state.uploaded_files['transactions']
 
-if transactions_file:
-    transactions_df = load_csv(transactions_file)
-    transactions_df.columns = transactions_df.columns.str.strip().str.lower()
-    transactions_df['date'] = pd.to_datetime(transactions_df['date'], errors='coerce')
-    transactions_df = transactions_df.dropna(subset=['date'])
-    transactions_df['amount'] = pd.to_numeric(transactions_df['amount'], errors='coerce')
-    start_date, end_date = transactions_df['date'].min(), transactions_df['date'].max()
-else:
-    transactions_df = pd.DataFrame()
-    start_date, end_date = None, None
+        # Format date column if needed
+        if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+            df['Date'] = pd.to_datetime(df['Date'])
 
-if accounts_file:
-    accounts_df = load_csv(accounts_file)
-    accounts_df.columns = accounts_df.columns.str.strip().str.lower()
-    total_assets, total_liabilities, total_equity = summarize_balance_sheet(accounts_df)
-else:
-    accounts_df = pd.DataFrame()
-    total_assets, total_liabilities, total_equity = 0, 0, 0
+        # Year filter
+        year_list = sorted(df['Date'].dt.year.unique(), reverse=True)
+        selected_year = st.selectbox("Filter by Year", options=year_list, index=0)
+        df_filtered = df[df['Date'].dt.year == selected_year]
 
-# -------------------------------
-# Dashboard Metrics
-# -------------------------------
-if not transactions_df.empty:
-    total_income = transactions_df[transactions_df['amount'] > 0]['amount'].sum()
-    total_expense = transactions_df[transactions_df['amount'] < 0]['amount'].sum()
-    net_cashflow = total_income + total_expense
-    st.subheader("📊 Key Financial Metrics")
-    style_metric_cards()
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Total Transactions", f"{len(transactions_df):,}")
-    col2.metric("Date Range", f"{start_date.date()} → {end_date.date()}")
-    col3.metric("Total Income", f"${total_income:,.2f}")
-    col4.metric("Total Expenses", f"(${abs(total_expense):,.2f})")
-    col5.metric("Net Cash Flow", f"${net_cashflow:,.2f}")
-    st.divider()
+        # Snapshot Metrics
+        st.markdown(f"### Summary for {selected_year}")
+        income = df_filtered[df_filtered['Amount'] > 0]['Amount'].sum()
+        expense = df_filtered[df_filtered['Amount'] < 0]['Amount'].sum()
+        net_cashflow = income + expense
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Income", f"${income:,.2f}")
+        col2.metric("Expenses", f"(${abs(expense):,.2f})")
+        col3.metric("Net Cashflow", f"${net_cashflow:,.2f}")
 
-    colA, colB, colC = st.columns(3)
-    colA.metric("Total Assets", f"${total_assets:,.0f}")
-    colB.metric("Liabilities", f"(${abs(total_liabilities):,.0f})")
-    colC.metric("Equity", f"${total_equity:,.0f}")
-
-# -------------------------------
-# Insights Tab (Recurring + Charts)
-# -------------------------------
-if not transactions_df.empty:
-    st.header("📈 Insights")
-    with st.expander("💸 Monthly Cash Flow Chart"):
-        monthly = transactions_df.groupby(pd.Grouper(key='date', freq='M'))['amount'].sum().reset_index()
-        monthly['month'] = monthly['date'].dt.strftime('%b %Y')
-        fig = px.bar(monthly, x='month', y='amount', title='Monthly Net Cash Flow', labels={'amount': 'Net Flow'})
+        # Monthly Cashflow Chart
+        st.markdown("### 📈 Monthly Cash Flow")
+        monthly_cf = df_filtered.groupby(df_filtered['Date'].dt.to_period("M"))['Amount'].sum().reset_index()
+        monthly_cf['Date'] = monthly_cf['Date'].dt.to_timestamp()
+        fig = px.bar(monthly_cf, x='Date', y='Amount', title='Monthly Net Flow')
         st.plotly_chart(fig, use_container_width=True)
 
-    with st.expander("🔁 Recurring Expense Detection"):
-        transactions_df = detect_recurring(transactions_df)
-        st.dataframe(transactions_df[transactions_df['recurring']])
+        # Recurring Expense Detection
+        st.markdown("### 🔁 Potential Recurring Expenses")
+        recurring = df_filtered[df_filtered['Amount'] < 0]
+        recurring_summary = recurring.groupby('Description').filter(lambda x: len(x) > 3)
+        if not recurring_summary.empty:
+            recurring_grouped = recurring_summary.groupby('Description')['Amount'].agg(['count', 'mean', 'sum'])
+            st.dataframe(recurring_grouped.sort_values(by='count', ascending=False))
+        else:
+            st.info("No recurring expenses found with >3 entries")
 
-# -------------------------------
-# Assistant Placeholder
-# -------------------------------
-with st.sidebar:
-    st.markdown("## 🤖 Assistant")
-    st.markdown("This section will include natural language chat with financial data context.")
+        # Full Table View
+        with st.expander("🔍 View Raw Transactions"):
+            st.dataframe(df_filtered)
 
-# -------------------------------
-# Year Tabs (if requested)
-# -------------------------------
-if not transactions_df.empty:
-    years = sorted(transactions_df['date'].dt.year.unique())
-    selected_year = st.selectbox("Select Year to View", years[::-1])
-    df_year = transactions_df[transactions_df['date'].dt.year == selected_year]
-    st.subheader(f"🗓️ {selected_year} Summary")
-    st.write(df_year.describe())
-    st.dataframe(df_year)
+    else:
+        st.info("Upload a transactions CSV to view data.")
 
-# -------------------------------
-# Login Sidebar Info
-# -------------------------------
-with st.sidebar:
-    st.markdown("---")
-    st.markdown("👤 Logged in as: `demo`")
-    if transactions_file:
-        st.markdown(f"🗂 Uploaded Transactions Snapshot: `{transactions_file.name}`")
-    if accounts_file:
-        st.markdown(f"💼 Uploaded Account Balances: `{accounts_file.name}`")
+# -----------------------------
+# Assistant (Placeholder)
+# -----------------------------
+with tabs[5]:
+    st.subheader("🧠 Ask the Assistant")
+    st.markdown("This is where your AI assistant will go once integrated with OpenAI's API.")
+    st.text_area("Ask a question about your finances...")
+    st.button("Submit (Coming Soon)")
 
-# -------------------------------
-# Footer
-# -------------------------------
-st.markdown("---")
-st.caption("Monarch+ Dashboard · Built with ❤️ by Authentic Financial")
 
 
 
