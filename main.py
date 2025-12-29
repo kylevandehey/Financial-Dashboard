@@ -5,125 +5,153 @@ import datetime as dt
 
 st.set_page_config(page_title="Monarch+ Personal Finance Dashboard", layout="wide")
 
-st.title("📊 Monarch+ Personal Finance Dashboard")
+# ---------- Sidebar Upload Section ----------
+st.sidebar.title("📁 Data Manager")
+st.sidebar.markdown("**Upload trade-log CSV**")
+st.sidebar.file_uploader("Drag and drop file here", type="csv")
+st.sidebar.markdown("✅ Supports Monarch, Tiller, YNAB, PocketSmith, and more.")
 
-# -----------------------
-# SIDEBAR - Global Filters
-# -----------------------
-st.sidebar.header("📅 Date Range Filter")
-today = dt.date.today()
-start_default = dt.date(today.year, 1, 1)
-end_default = today
+# ---------- Tabs ----------
+tabs = st.tabs(["📊 Dashboard", "💰 Transactions", "🏦 Accounts", "🧠 Insights", "📈 Loans", "🧮 Loan Calculator", "💬 Assistant"])
 
-date_range = st.sidebar.date_input("Select custom date range:", value=(start_default, end_default))
-start_date, end_date = date_range
+df_txn, df_accounts = None, None
 
-# -----------------------
-# TABS
-# -----------------------
-tab1, tab2, tab3, tab4 = st.tabs(["💳 Transactions", "💰 Accounts", "📊 Insights", "📄 PDF Report"])
+# ---------- Dashboard Tab ----------
+with tabs[0]:
+    st.header("📊 Dashboard")
 
-# -----------------------
-# TRANSACTIONS TAB
-# -----------------------
-with tab1:
-    st.header("💳 Upload Transactions CSV")
-    txn_file = st.file_uploader("Upload Monarch Transactions CSV", type="csv", key="txn")
+    st.subheader("📥 Upload Your Files")
+    col1, col2 = st.columns(2)
+    with col1:
+        txn_file = st.file_uploader("Upload Transactions CSV", type="csv", key="txn")
+    with col2:
+        acct_file = st.file_uploader("Upload Accounts CSV", type="csv", key="acct")
 
     if txn_file:
         df_txn = pd.read_csv(txn_file)
-        df_txn.columns = [col.strip() for col in df_txn.columns]
         df_txn['Date'] = pd.to_datetime(df_txn['Date'])
-        df_txn = df_txn[(df_txn['Date'].dt.date >= start_date) & (df_txn['Date'].dt.date <= end_date)]
-
-        st.success(f"{len(df_txn)} transactions loaded for selected date range!")
-
-        income_total = df_txn[df_txn['Amount'] > 0]['Amount'].sum()
-        expense_total = df_txn[df_txn['Amount'] < 0]['Amount'].sum()
-        net_total = income_total + expense_total
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"${income_total:,.2f}")
-        col2.metric("Total Expenses", f"${expense_total:,.2f}")
-        col3.metric("Net Cash Flow", f"${net_total:,.2f}")
-
-        # ---------- CATEGORY METRICS ----------
-        st.subheader("🧾 Top Spending & Income Categories")
-
-        # EXPENSES
-        expense_df = df_txn[df_txn['Amount'] < 0]
-        expense_summary = expense_df.groupby('Category')['Amount'].sum().sort_values().reset_index()
-        expense_summary['Amount'] = expense_summary['Amount'].abs()
-
-        show_all_exp = st.toggle("Show all expense categories", value=False, key="exp_toggle")
-        display_exp = expense_summary if show_all_exp else expense_summary.head(5)
-
-        st.markdown("**💸 Expense Categories**")
-        for i, row in display_exp.iterrows():
-            st.metric(label=row['Category'], value=f"-${row['Amount']:,.2f}")
-
-        # INCOME
-        income_df = df_txn[df_txn['Amount'] > 0]
-        income_summary = income_df.groupby('Category')['Amount'].sum().sort_values(ascending=False).reset_index()
-
-        show_all_inc = st.toggle("Show all income categories", value=False, key="inc_toggle")
-        display_inc = income_summary if show_all_inc else income_summary.head(5)
-
-        st.markdown("**💵 Income Categories**")
-        for i, row in display_inc.iterrows():
-            st.metric(label=row['Category'], value=f"${row['Amount']:,.2f}")
-
-        # VIEW AS TABLE (optional)
-        if st.checkbox("Show Category Totals as Table"):
-            colA, colB = st.columns(2)
-            colA.dataframe(expense_summary.rename(columns={"Amount": "Spent ($)"}))
-            colB.dataframe(income_summary.rename(columns={"Amount": "Earned ($)"}))
-
-        # ---------- FULL TRANSACTIONS ----------
-        st.subheader("📃 All Transactions")
-        st.dataframe(df_txn.sort_values('Date', ascending=False))
-
-    else:
-        st.info("Upload a CSV file to get started.")
-
-# -----------------------
-# ACCOUNTS TAB
-# -----------------------
-with tab2:
-    st.header("📥 Upload Accounts CSV")
-    acct_file = st.file_uploader("Upload Monarch Accounts CSV (Net Worth)", type="csv", key="acct")
 
     if acct_file:
-        df_acct = pd.read_csv(acct_file)
-        df_acct.columns = [col.strip() for col in df_acct.columns]
-        df_acct['Date'] = pd.to_datetime(df_acct['Date'])
+        df_accounts = pd.read_csv(acct_file)
+        if 'Date' in df_accounts.columns:
+            df_accounts['Date'] = pd.to_datetime(df_accounts['Date'])
 
-        df_acct = df_acct[(df_acct['Date'].dt.date >= start_date) & (df_acct['Date'].dt.date <= end_date)]
+    # Date Range Filters
+    st.subheader("📆 Date Range Filters")
+    preset_options = {
+        "Year to Date": (dt.date(dt.datetime.now().year, 1, 1), dt.date.today()),
+        "Last 12 Months": (dt.date.today() - pd.DateOffset(months=12), dt.date.today()),
+        "Last 30 Days": (dt.date.today() - pd.DateOffset(days=30), dt.date.today()),
+        "All Time": (None, None),
+    }
 
-        st.success(f"{len(df_acct)} account snapshots loaded!")
+    preset = st.selectbox("Preset Ranges", list(preset_options.keys()), index=0)
+    if preset_options[preset][0] is not None:
+        start_date, end_date = preset_options[preset]
+    else:
+        start_date, end_date = None, None
 
-        if {'Amount', 'Date'}.issubset(df_acct.columns):
-            net_worth = df_acct.groupby('Date')['Amount'].sum().reset_index()
-            st.subheader("📈 Net Worth Over Time")
-            st.line_chart(net_worth.set_index('Date'))
+    col1, col2 = st.columns(2)
+    with col1:
+        custom_start = st.date_input("Start Date", start_date)
+    with col2:
+        custom_end = st.date_input("End Date", end_date)
 
-            nw_change = net_worth['Amount'].iloc[-1] - net_worth['Amount'].iloc[0]
-            st.metric("Change in Net Worth", f"${nw_change:,.2f}")
-        else:
-            st.warning("Missing columns 'Date' and 'Amount'.")
+    if df_txn is not None:
+        df_txn = df_txn[(df_txn['Date'] >= pd.to_datetime(custom_start)) & (df_txn['Date'] <= pd.to_datetime(custom_end))]
 
-# -----------------------
-# INSIGHTS TAB
-# -----------------------
-with tab3:
-    st.header("📊 Insights Coming Soon")
-    st.info("Advanced analytics, trends, and projections will be available here.")
+        st.success(f"{len(df_txn)} transactions loaded!")
 
-# -----------------------
-# PDF EXPORT TAB
-# -----------------------
-with tab4:
-    st.header("📄 PDF Report Export")
-    st.info("You'll soon be able to export a PDF summary of your dashboard!")
+        # High-level summary metrics
+        col1, col2, col3 = st.columns(3)
+        total_income = df_txn[df_txn['Amount'] > 0]['Amount'].sum()
+        total_expense = df_txn[df_txn['Amount'] < 0]['Amount'].sum()
+        net_cashflow = total_income + total_expense
+
+        col1.metric("Total Income", f"${total_income:,.2f}")
+        col2.metric("Total Expenses", f"${total_expense:,.2f}")
+        col3.metric("Net Cash Flow", f"${net_cashflow:,.2f}")
+
+        st.subheader("📈 Monthly Cash Flow")
+        monthly = df_txn.groupby(df_txn['Date'].dt.to_period('M'))['Amount'].sum()
+        st.line_chart(monthly)
+
+        st.subheader("📊 Spending by Category")
+        cat_group = df_txn.groupby('Category')['Amount'].sum().sort_values()
+        st.bar_chart(cat_group)
+
+        # Summary metric boxes by top 5 categories (income & expenses)
+        st.subheader("💼 Top Categories Summary")
+        income_cats = df_txn[df_txn['Amount'] > 0].groupby('Category')['Amount'].sum().sort_values(ascending=False)
+        expense_cats = df_txn[df_txn['Amount'] < 0].groupby('Category')['Amount'].sum().sort_values()
+
+        st.markdown("#### 🟢 Top Income Categories")
+        show_all_income = st.toggle("Show All Income Categories")
+        income_display = income_cats if show_all_income else income_cats.head(5)
+        for cat, amt in income_display.items():
+            st.metric(label=cat, value=f"${amt:,.2f}")
+
+        st.markdown("#### 🔴 Top Expense Categories")
+        show_all_expense = st.toggle("Show All Expense Categories")
+        expense_display = expense_cats if show_all_expense else expense_cats.head(5)
+        for cat, amt in expense_display.items():
+            st.metric(label=cat, value=f"${amt:,.2f}")
+
+    if df_accounts is not None:
+        st.subheader("📦 Net Worth Snapshot")
+        if {'Asset', 'Liability'}.issubset(df_accounts.columns):
+            asset_total = df_accounts['Asset'].sum()
+            liability_total = df_accounts['Liability'].sum()
+            equity = asset_total - liability_total
+
+            st.metric("Total Assets", f"${asset_total:,.2f}")
+            st.metric("Total Liabilities", f"${liability_total:,.2f}")
+            st.metric("Net Worth", f"${equity:,.2f}")
+
+# ---------- Transactions Tab ----------
+with tabs[1]:
+    st.header("📄 All Transactions")
+    if df_txn is not None:
+        st.dataframe(df_txn.sort_values("Date", ascending=False))
+
+# ---------- Accounts Tab ----------
+with tabs[2]:
+    st.header("🏦 Account Balance Over Time")
+    if df_accounts is not None:
+        df_accounts['Date'] = pd.to_datetime(df_accounts['Date'])
+        if {'Date', 'Amount'}.issubset(df_accounts.columns):
+            trend = df_accounts.groupby('Date')['Amount'].sum().reset_index()
+            st.line_chart(trend.set_index('Date'))
+
+# ---------- Insights Tab (Placeholder) ----------
+with tabs[3]:
+    st.header("🧠 Financial Health Insights")
+    st.markdown("- Coming soon: volatility scores, savings rate, debt ratios, tax readiness, trailing averages")
+
+# ---------- Loans Tab (Placeholder) ----------
+with tabs[4]:
+    st.header("📈 Loan Planning & Amortization")
+    st.markdown("- Future: Add mortgage, vehicle, student loans and visualize payoff strategies.")
+
+# ---------- Loan Calculator ----------
+with tabs[5]:
+    st.header("🧮 Loan Calculator")
+    loan_amt = st.number_input("Loan Amount", value=25000)
+    interest = st.number_input("Annual Interest Rate (%)", value=5.0)
+    years = st.number_input("Loan Term (Years)", value=5)
+
+    months = years * 12
+    monthly_rate = interest / 100 / 12
+    payment = loan_amt * monthly_rate / (1 - (1 + monthly_rate) ** -months)
+
+    st.metric("Monthly Payment", f"${payment:,.2f}")
+
+# ---------- Assistant Tab ----------
+with tabs[6]:
+    st.header("💬 Ask a Financial Question")
+    query = st.text_area("What do you want to know about your finances?")
+    if query:
+        st.info("This feature will soon connect to a financial GPT assistant.")
+
 
 
