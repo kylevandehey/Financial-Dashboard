@@ -6,7 +6,5 @@ python-dateutil
 openai
 altair
 seaborn
-tqdm
-scikit-learn
-streamlit-extras
+numpy
 
