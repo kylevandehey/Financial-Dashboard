@@ -6,6 +6,7 @@ python-dateutil
 openai
 altair
 seaborn
+tqdm
+scikit-learn
 streamlit-extras
-streamlit-option-menu
-streamlit-toggle-switch
+
