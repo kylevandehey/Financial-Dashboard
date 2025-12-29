@@ -1,140 +1,129 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import datetime as dt
-import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Monarch+ Personal Finance Dashboard", layout="wide")
+
 st.title("📊 Monarch+ Personal Finance Dashboard")
 
-# ---------------- Date Range Presets -------------------
+# -----------------------
+# SIDEBAR - Global Filters
+# -----------------------
+st.sidebar.header("📅 Date Range Filter")
 today = dt.date.today()
-ytd_start = dt.date(today.year, 1, 1)
+start_default = dt.date(today.year, 1, 1)
+end_default = today
 
-preset_ranges = {
-    "Year to Date (YTD)": (ytd_start, today),
-    "Last 30 Days": (today - dt.timedelta(days=30), today),
-    "Last 90 Days": (today - dt.timedelta(days=90), today),
-    "All Time": (None, None),
-    "Custom Range": "custom"
-}
+date_range = st.sidebar.date_input("Select custom date range:", value=(start_default, end_default))
+start_date, end_date = date_range
 
-st.sidebar.markdown("## 📅 Date Range Filter")
-selected_range = st.sidebar.selectbox("Select Date Range", list(preset_ranges.keys()))
-
-if selected_range == "Custom Range":
-    custom_start = st.sidebar.date_input("Start Date", ytd_start)
-    custom_end = st.sidebar.date_input("End Date", today)
-    date_start, date_end = custom_start, custom_end
-elif selected_range == "All Time":
-    date_start, date_end = None, None
-else:
-    date_start, date_end = preset_ranges[selected_range]
-
-# ---------------- Tabs Layout --------------------------
+# -----------------------
+# TABS
+# -----------------------
 tab1, tab2, tab3, tab4 = st.tabs(["💳 Transactions", "💰 Accounts", "📊 Insights", "📄 PDF Report"])
 
-# ---------------------- TRANSACTIONS TAB ----------------------
+# -----------------------
+# TRANSACTIONS TAB
+# -----------------------
 with tab1:
     st.header("💳 Upload Transactions CSV")
-    transactions_file = st.file_uploader("Upload Monarch Transactions CSV", type="csv", key="txn")
+    txn_file = st.file_uploader("Upload Monarch Transactions CSV", type="csv", key="txn")
 
-    if transactions_file:
-        df_txn = pd.read_csv(transactions_file)
+    if txn_file:
+        df_txn = pd.read_csv(txn_file)
         df_txn.columns = [col.strip() for col in df_txn.columns]
+        df_txn['Date'] = pd.to_datetime(df_txn['Date'])
+        df_txn = df_txn[(df_txn['Date'].dt.date >= start_date) & (df_txn['Date'].dt.date <= end_date)]
 
-        if 'Date' in df_txn.columns:
-            df_txn['Date'] = pd.to_datetime(df_txn['Date']).dt.date
+        st.success(f"{len(df_txn)} transactions loaded for selected date range!")
 
-            # Apply Date Filter
-            if date_start and date_end:
-                df_txn = df_txn[(df_txn['Date'] >= date_start) & (df_txn['Date'] <= date_end)]
-
-        st.success(f"{len(df_txn)} transactions loaded for selected date range.")
-
-        income = df_txn[df_txn['Amount'] > 0]['Amount'].sum()
-        expenses = df_txn[df_txn['Amount'] < 0]['Amount'].sum()
-        cash_flow = income + expenses
+        income_total = df_txn[df_txn['Amount'] > 0]['Amount'].sum()
+        expense_total = df_txn[df_txn['Amount'] < 0]['Amount'].sum()
+        net_total = income_total + expense_total
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"${income:,.2f}")
-        col2.metric("Total Expenses", f"${expenses:,.2f}")
-        col3.metric("Net Cash Flow", f"${cash_flow:,.2f}")
+        col1.metric("Total Income", f"${income_total:,.2f}")
+        col2.metric("Total Expenses", f"${expense_total:,.2f}")
+        col3.metric("Net Cash Flow", f"${net_total:,.2f}")
 
-        # Monthly Cash Flow
-        if 'Date' in df_txn.columns:
-            df_txn['Month'] = pd.to_datetime(df_txn['Date']).dt.to_period('M')
-            monthly_cf = df_txn.groupby('Month')['Amount'].sum().reset_index()
-            monthly_cf['Month'] = monthly_cf['Month'].astype(str)
+        # ---------- CATEGORY METRICS ----------
+        st.subheader("🧾 Top Spending & Income Categories")
 
-            st.subheader("📈 Monthly Cash Flow")
-            st.line_chart(monthly_cf.set_index('Month')['Amount'])
+        # EXPENSES
+        expense_df = df_txn[df_txn['Amount'] < 0]
+        expense_summary = expense_df.groupby('Category')['Amount'].sum().sort_values().reset_index()
+        expense_summary['Amount'] = expense_summary['Amount'].abs()
 
-        # Category Breakdown
-        if 'Category' in df_txn.columns:
-            st.subheader("🛍️ Spending by Category")
-            category_totals = df_txn[df_txn['Amount'] < 0].groupby('Category')['Amount'].sum().sort_values()
-            st.bar_chart(category_totals)
+        show_all_exp = st.toggle("Show all expense categories", value=False, key="exp_toggle")
+        display_exp = expense_summary if show_all_exp else expense_summary.head(5)
 
-        # Recurring Expenses Detection
-        st.subheader("🔁 Recurring Expenses")
-        grouping_col = next((col for col in ['Description', 'Payee', 'Account Name'] if col in df_txn.columns), None)
+        st.markdown("**💸 Expense Categories**")
+        for i, row in display_exp.iterrows():
+            st.metric(label=row['Category'], value=f"-${row['Amount']:,.2f}")
 
-        if grouping_col:
-            recurring = df_txn.groupby([grouping_col, pd.to_datetime(df_txn['Date']).to_period('M')]).size().unstack().fillna(0)
-            recurring['Recurring Count'] = (recurring > 0).sum(axis=1)
-            recurring_expenses = recurring[recurring['Recurring Count'] >= 3].sort_values('Recurring Count', ascending=False)
+        # INCOME
+        income_df = df_txn[df_txn['Amount'] > 0]
+        income_summary = income_df.groupby('Category')['Amount'].sum().sort_values(ascending=False).reset_index()
 
-            st.markdown(f"Using **{grouping_col}** to detect recurring expenses.")
-            st.dataframe(recurring_expenses[['Recurring Count']])
-        else:
-            st.warning("⚠️ No suitable column found (like 'Description', 'Payee', or 'Account Name') to detect recurring expenses.")
+        show_all_inc = st.toggle("Show all income categories", value=False, key="inc_toggle")
+        display_inc = income_summary if show_all_inc else income_summary.head(5)
 
-        # Full Table
-        st.subheader("📄 All Transactions")
+        st.markdown("**💵 Income Categories**")
+        for i, row in display_inc.iterrows():
+            st.metric(label=row['Category'], value=f"${row['Amount']:,.2f}")
+
+        # VIEW AS TABLE (optional)
+        if st.checkbox("Show Category Totals as Table"):
+            colA, colB = st.columns(2)
+            colA.dataframe(expense_summary.rename(columns={"Amount": "Spent ($)"}))
+            colB.dataframe(income_summary.rename(columns={"Amount": "Earned ($)"}))
+
+        # ---------- FULL TRANSACTIONS ----------
+        st.subheader("📃 All Transactions")
         st.dataframe(df_txn.sort_values('Date', ascending=False))
 
     else:
-        st.info("Upload a transactions CSV file to begin.")
+        st.info("Upload a CSV file to get started.")
 
-# ---------------------- ACCOUNTS TAB ----------------------
+# -----------------------
+# ACCOUNTS TAB
+# -----------------------
 with tab2:
-    st.header("💰 Upload Accounts CSV")
-    accounts_file = st.file_uploader("Upload Monarch Accounts CSV (Net Worth)", type="csv", key="acct")
+    st.header("📥 Upload Accounts CSV")
+    acct_file = st.file_uploader("Upload Monarch Accounts CSV (Net Worth)", type="csv", key="acct")
 
-    if accounts_file:
-        df_accounts = pd.read_csv(accounts_file)
-        df_accounts.columns = [col.strip() for col in df_accounts.columns]
+    if acct_file:
+        df_acct = pd.read_csv(acct_file)
+        df_acct.columns = [col.strip() for col in df_acct.columns]
+        df_acct['Date'] = pd.to_datetime(df_acct['Date'])
 
-        if 'Date' in df_accounts.columns:
-            df_accounts['Date'] = pd.to_datetime(df_accounts['Date']).dt.date
+        df_acct = df_acct[(df_acct['Date'].dt.date >= start_date) & (df_acct['Date'].dt.date <= end_date)]
 
-            # Apply Date Filter
-            if date_start and date_end:
-                df_accounts = df_accounts[(df_accounts['Date'] >= date_start) & (df_accounts['Date'] <= date_end)]
+        st.success(f"{len(df_acct)} account snapshots loaded!")
 
-        st.success("Accounts data loaded.")
-
-        # Net Worth Over Time
-        if all(col in df_accounts.columns for col in ['Account', 'Amount', 'Date']):
-            net_worth = df_accounts.groupby('Date')['Amount'].sum().reset_index()
-            st.subheader("📉 Net Worth Over Time")
+        if {'Amount', 'Date'}.issubset(df_acct.columns):
+            net_worth = df_acct.groupby('Date')['Amount'].sum().reset_index()
+            st.subheader("📈 Net Worth Over Time")
             st.line_chart(net_worth.set_index('Date'))
 
             nw_change = net_worth['Amount'].iloc[-1] - net_worth['Amount'].iloc[0]
             st.metric("Change in Net Worth", f"${nw_change:,.2f}")
         else:
-            st.warning("Missing required columns in accounts CSV: 'Account', 'Amount', or 'Date'.")
+            st.warning("Missing columns 'Date' and 'Amount'.")
 
-    else:
-        st.info("Upload an accounts CSV to track assets & liabilities.")
-
-# ---------------------- INSIGHTS TAB ----------------------
+# -----------------------
+# INSIGHTS TAB
+# -----------------------
 with tab3:
-    st.header("📊 Insights (Coming Soon)")
-    st.info("Future enhancements: savings rate, burn rate, category-level volatility, and financial health score.")
+    st.header("📊 Insights Coming Soon")
+    st.info("Advanced analytics, trends, and projections will be available here.")
 
-# ---------------------- PDF REPORT TAB ----------------------
+# -----------------------
+# PDF EXPORT TAB
+# -----------------------
 with tab4:
-    st.header("📄 PDF Report (Coming Soon)")
-    st.info("Generate printable personal finance summaries for your records or clients.")
+    st.header("📄 PDF Report Export")
+    st.info("You'll soon be able to export a PDF summary of your dashboard!")
+
 
