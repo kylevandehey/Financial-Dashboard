@@ -1,149 +1,130 @@
+# main.py
 import streamlit as st
-st.set_page_config(layout="wide", page_title="Monarch+ Dashboard")
-
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import plotly.express as px
-import os
-import base64
 from datetime import datetime
-from io import StringIO
 
-# -----------------------------
-# Utility Functions
-# -----------------------------
-def load_csv(uploaded_file):
-    try:
-        return pd.read_csv(uploaded_file)
-    except Exception as e:
-        st.error(f"Failed to load file: {e}")
-        return pd.DataFrame()
+# App config
+st.set_page_config(layout="wide", page_title="Monarch+ Dashboard")
 
-def summarize_balance_sheet(accounts_df):
-    if 'Type' not in accounts_df.columns or 'Balance' not in accounts_df.columns:
-        return 0, 0, 0
-    accounts_df['Type'] = accounts_df['Type'].str.lower()
-    total_assets = accounts_df[accounts_df['Type'] == 'asset']['Balance'].sum()
-    total_liabilities = accounts_df[accounts_df['Type'] == 'liability']['Balance'].sum()
-    total_equity = total_assets - total_liabilities
-    return total_assets, total_liabilities, total_equity
-
-def summarize_transactions(trans_df):
-    income = trans_df[trans_df['Amount'] > 0]['Amount'].sum()
-    expenses = trans_df[trans_df['Amount'] < 0]['Amount'].sum()
-    net = income + expenses
-    return income, abs(expenses), net
-
-def detect_recurring_expenses(trans_df):
-    recurring = trans_df.groupby(['Description', trans_df['Date'].str[:7]]).size()
-    recurring = recurring[recurring >= 2].reset_index().groupby('Description').size()
-    return recurring[recurring >= 2].index.tolist()
-
-def filter_by_date(df, start_date, end_date):
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    return df[(df['Date'] >= start_date) & (df['Date'] <= end_date)]
-
-# -----------------------------
-# Session State Initialization
-# -----------------------------
-if 'uploaded_files' not in st.session_state:
+# Session state init
+if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = {}
 
-# -----------------------------
-# Sidebar Navigation
-# -----------------------------
-st.sidebar.title("🔐 User Login (Coming Soon)")
-st.sidebar.text_input("Username")
-st.sidebar.text_input("Password", type="password")
-st.sidebar.caption("Authentication not required yet.")
+# Placeholder login panel
+with st.sidebar:
+    st.markdown("#### 🔒 User Login (Coming Soon)")
+    st.text_input("Username")
+    st.text_input("Password", type="password")
+    st.caption("Authentication not required yet.")
 
-page = st.sidebar.radio("Navigate", ["Dashboard", "Transactions", "Insights", "Loan Tracker", "Loan Calculator", "Assistant"])
+# Tabs (top navigation layout)
+tabs = st.tabs(["🏠 Dashboard", "📄 Transactions", "📊 Insights", "📈 Loan Tracker", "🧮 Loan Calculator", "💬 Assistant"])
 
-# -----------------------------
-# Dashboard
-# -----------------------------
-if page == "Dashboard":
-    st.title("🏠 Monarch+ Dashboard")
+### --- TAB 1: DASHBOARD --- ###
+with tabs[0]:
+    st.title("Monarch+ Dashboard")
 
     st.subheader("Upload Transactions CSV")
-    trans_file = st.file_uploader("Upload Transactions", type="csv", key="trans")
-    if trans_file:
-        trans_df = load_csv(trans_file)
-        st.session_state.uploaded_files['transactions'] = trans_df
+    transactions_file = st.file_uploader("Upload Transactions File", type="csv", key="transactions")
 
     st.subheader("Upload Accounts CSV")
-    acc_file = st.file_uploader("Upload Accounts", type="csv", key="acc")
-    if acc_file:
-        acc_df = load_csv(acc_file)
-        st.session_state.uploaded_files['accounts'] = acc_df
+    accounts_file = st.file_uploader("Upload Accounts File", type="csv", key="accounts")
 
-    # Date Filters
-    if 'transactions' in st.session_state.uploaded_files:
-        df = st.session_state.uploaded_files['transactions']
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        min_date = df['Date'].min()
-        max_date = df['Date'].max()
+    if transactions_file and accounts_file:
+        transactions_df = pd.read_csv(transactions_file)
+        accounts_df = pd.read_csv(accounts_file)
 
-        start_date = st.date_input("Start Date", min_value=min_date, max_value=max_date, value=min_date)
-        end_date = st.date_input("End Date", min_value=min_date, max_value=max_date, value=max_date)
+        # Auto-detect and convert date column
+        if 'Date' in transactions_df.columns:
+            transactions_df['Date'] = pd.to_datetime(transactions_df['Date'], errors='coerce')
 
-        filtered_df = filter_by_date(df, start_date, end_date)
+        if 'Type' in accounts_df.columns and 'Balance' in accounts_df.columns:
+            accounts_df['Type'] = accounts_df['Type'].str.lower()
+            total_assets = accounts_df[accounts_df['Type'] == 'asset']['Balance'].sum()
+            total_liabilities = accounts_df[accounts_df['Type'] == 'liability']['Balance'].sum()
+            total_equity = total_assets - total_liabilities
 
-        income, expenses, net = summarize_transactions(filtered_df)
+            st.metric("Total Assets", f"${total_assets:,.2f}")
+            st.metric("Total Liabilities", f"${total_liabilities:,.2f}")
+            st.metric("Equity", f"${total_equity:,.2f}")
+        else:
+            st.error("Ensure 'Type' and 'Balance' columns exist in Accounts file.")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Income", f"${income:,.2f}")
-        col2.metric("Expenses", f"${expenses:,.2f}")
-        col3.metric("Net", f"${net:,.2f}", delta=f"{(income - expenses):,.2f}")
+        # Date filter
+        with st.expander("📅 Filter Date Range"):
+            start_date = st.date_input("Start Date", value=transactions_df['Date'].min().date())
+            end_date = st.date_input("End Date", value=transactions_df['Date'].max().date())
 
-    if 'accounts' in st.session_state.uploaded_files:
-        acc_df = st.session_state.uploaded_files['accounts']
-        total_assets, total_liabilities, total_equity = summarize_balance_sheet(acc_df)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Assets", f"${total_assets:,.2f}")
-        col2.metric("Liabilities", f"${total_liabilities:,.2f}")
-        col3.metric("Equity", f"${total_equity:,.2f}")
+        def filter_by_date(df, start_date, end_date):
+            df = df[df['Date'].notnull()]  # ensure no NaT
+            return df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
 
-# -----------------------------
-# Transactions Tab
-# -----------------------------
-elif page == "Transactions":
-    st.title("📄 Transactions")
-    if 'transactions' in st.session_state.uploaded_files:
-        df = st.session_state.uploaded_files['transactions']
-        st.dataframe(df)
-        recurring = detect_recurring_expenses(df)
-        if recurring:
-            st.subheader("🔁 Potential Recurring Expenses")
-            st.write(recurring)
+        filtered_df = filter_by_date(transactions_df, start_date, end_date)
 
-# -----------------------------
-# Insights Tab (Stub)
-# -----------------------------
-elif page == "Insights":
-    st.title("📊 Financial Insights")
-    st.info("More insights and charting features coming soon!")
+        st.subheader("💰 Summary Metrics")
+        st.metric("Income", f"${filtered_df[filtered_df['Amount'] > 0]['Amount'].sum():,.2f}")
+        st.metric("Expenses", f"${-filtered_df[filtered_df['Amount'] < 0]['Amount'].sum():,.2f}")
+        st.metric("Net", f"${filtered_df['Amount'].sum():,.2f}")
 
-# -----------------------------
-# Loan Tracker Tab (Stub)
-# -----------------------------
-elif page == "Loan Tracker":
-    st.title("🏦 Loan Tracker")
-    st.warning("Loan tracking features under construction.")
+    else:
+        st.warning("Please upload both Transactions and Accounts CSV files.")
 
-# -----------------------------
-# Loan Calculator Tab (Stub)
-# -----------------------------
-elif page == "Loan Calculator":
-    st.title("🧮 Loan Calculator")
-    st.info("Custom amortization and loan payoff calculators coming soon.")
+### --- TAB 2: TRANSACTIONS --- ###
+with tabs[1]:
+    st.header("📄 Transactions Viewer")
+    if transactions_file:
+        st.dataframe(transactions_df)
+    else:
+        st.info("Upload a Transactions file in the Dashboard tab.")
 
-# -----------------------------
-# Assistant Tab (Stub)
-# -----------------------------
-elif page == "Assistant":
-    st.title("🤖 Chat Assistant")
-    st.success("Chat module for questions about your finances launching soon!")
+### --- TAB 3: INSIGHTS --- ###
+with tabs[2]:
+    st.header("📊 Financial Insights")
+    if transactions_file:
+        st.subheader("Toggle Chart View")
+        chart_type = st.selectbox("Chart Type", ["Bar Chart", "Line Chart", "Pie Chart"])
+
+        category_grouped = filtered_df.groupby('Category')['Amount'].sum().sort_values()
+
+        if chart_type == "Bar Chart":
+            fig = px.bar(category_grouped, x=category_grouped.index, y=category_grouped.values, labels={'x':'Category', 'y':'Amount'})
+            st.plotly_chart(fig)
+        elif chart_type == "Pie Chart":
+            fig = px.pie(names=category_grouped.index, values=category_grouped.values)
+            st.plotly_chart(fig)
+        else:
+            fig = px.line(filtered_df.sort_values('Date'), x='Date', y='Amount', color='Category')
+            st.plotly_chart(fig)
+    else:
+        st.info("Upload data first in the Dashboard tab.")
+
+### --- TAB 4: LOAN TRACKER --- ###
+with tabs[3]:
+    st.header("📈 Loan Tracker")
+    st.info("Coming soon — amortization tracking and payoff planning.")
+
+### --- TAB 5: LOAN CALCULATOR --- ###
+with tabs[4]:
+    st.header("🧮 Loan Calculator")
+    loan_amount = st.number_input("Loan Amount", value=10000)
+    interest_rate = st.number_input("Interest Rate (%)", value=5.0)
+    loan_term = st.number_input("Term (years)", value=5)
+
+    if loan_amount > 0 and interest_rate > 0 and loan_term > 0:
+        monthly_rate = interest_rate / 100 / 12
+        num_payments = loan_term * 12
+        monthly_payment = loan_amount * monthly_rate / (1 - (1 + monthly_rate)**-num_payments)
+        st.metric("Monthly Payment", f"${monthly_payment:,.2f}")
+
+### --- TAB 6: ASSISTANT --- ###
+with tabs[5]:
+    st.header("💬 AI Assistant")
+    st.info("Assistant functionality will be integrated here. Use this space to ask about your finances.")
+
 
 
 
