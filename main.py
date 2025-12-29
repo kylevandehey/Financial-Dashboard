@@ -1,212 +1,157 @@
-# Monarch+ Financial Dashboard — Full Skeleton with Advanced Planning Features
+# main.py (Monarch+ Personal Finance Dashboard v2)
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import datetime
-from io import StringIO
-import base64
+import datetime as dt
+from dateutil.relativedelta import relativedelta
 
-# ---------- Setup ----------
+# ------------------------------
+# Session State Initialization
+# ------------------------------
+if 'uploaded_files' not in st.session_state:
+    st.session_state.uploaded_files = {}
 
-st.set_page_config(page_title="Monarch+ Dashboard", layout="wide")
-st.markdown("""<style>section.main {padding-top: 1rem;} .element-container {padding-bottom: 0.75rem;} </style>""", unsafe_allow_html=True)
+# ------------------------------
+# Helper Functions
+# ------------------------------
+def format_currency(value):
+    if pd.isna(value):
+        return "$0.00"
+    return f"(${abs(value):,.2f})" if value < 0 else f"${value:,.2f}"
 
-# ---------- Session State ----------
+def load_csv(file):
+    return pd.read_csv(file)
 
-if "uploaded_files" not in st.session_state:
-st.session_state.uploaded_files = {}
+def extract_transaction_summary(transactions):
+    transactions['Date'] = pd.to_datetime(transactions['Date'])
+    first_date = transactions['Date'].min()
+    last_date = transactions['Date'].max()
+    total_income = transactions[transactions['Amount'] > 0]['Amount'].sum()
+    total_expense = transactions[transactions['Amount'] < 0]['Amount'].sum()
+    net_cashflow = total_income + total_expense
+    return first_date, last_date, total_income, total_expense, net_cashflow
 
-# ---------- Sidebar (revised) ----------
+def summarize_balance_sheet(accounts_df):
+    total_assets = accounts_df[accounts_df['Type'].str.lower() == 'asset']['Balance'].sum()
+    total_liabilities = accounts_df[accounts_df['Type'].str.lower() == 'liability']['Balance'].sum()
+    equity = total_assets - total_liabilities
+    return total_assets, total_liabilities, equity
 
-with st.sidebar:
-st.header("👤 User Settings")
-user_name = st.text_input("User Name", value="Guest")
+# ------------------------------
+# Sidebar - General Info & User Area
+# ------------------------------
+st.sidebar.title("👤 User Center")
+st.sidebar.markdown("Manage uploaded snapshots below:")
 
-```
-st.markdown("---")
-st.subheader("🕓 Upload History")
-if st.session_state.uploaded_files:
-    for k, v in st.session_state.uploaded_files.items():
-        st.markdown(f"**{k}** — {v['timestamp']}")
-else:
-    st.caption("No uploads yet.")
-```
+with st.sidebar.expander("📂 Uploaded CSV Snapshots"):
+    for fname in st.session_state.uploaded_files:
+        st.write(f"- {fname}")
 
-# ---------- File Loaders ----------
+# ------------------------------
+# Top Tabs
+# ------------------------------
+tabs = st.tabs(["📊 Dashboard", "📁 Transactions", "📄 Insights", "📌 Loan Tracker", "📎 Loan Calculator", "💬 Assistant"])
 
-@st.cache_data(show_spinner=False)
-def load_csv(uploaded_file):
-return pd.read_csv(uploaded_file, parse_dates=True)
-
-def get_date_bounds(df):
-df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-return df["Date"].min(), df["Date"].max()
-
-def format_currency(val):
-return f"(${abs(val):,.2f})" if val < 0 else f"${val:,.2f}"
-
-# ---------- Tab Controls ----------
-
-tabs = st.tabs(["📊 Dashboard", "🧾 Transactions", "📈 Insights", "📄 PDF Report", "🧮 Loan Tracker", "💬 Assistant", "🧠 Tools"])
-
-# ---------- TAB 1: Dashboard ----------
-
+# ------------------------------
+# Dashboard Tab
+# ------------------------------
 with tabs[0]:
-st.title("📊 Monarch+ Personal Finance Dashboard")
-st.subheader("📁 Upload Transactions CSV")
+    st.header("🏠 Monarch+ Dashboard")
+    uploaded_transactions = st.file_uploader("Upload Transactions CSV", type=["csv"], key="transactions")
+    uploaded_accounts = st.file_uploader("Upload Accounts CSV", type=["csv"], key="accounts")
 
-```
-uploaded_files = st.file_uploader("Upload Monarch CSV Files", accept_multiple_files=True, type="csv")
-file_registry = {}
+    if uploaded_transactions and uploaded_accounts:
+        st.session_state.uploaded_files['Transactions'] = uploaded_transactions.name
+        st.session_state.uploaded_files['Accounts'] = uploaded_accounts.name
 
-for file in uploaded_files:
-    df = load_csv(file)
-    st.session_state.uploaded_files[file.name] = {
-        "df": df,
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    file_registry[file.name] = df
+        transactions_df = load_csv(uploaded_transactions)
+        accounts_df = load_csv(uploaded_accounts)
 
-if "transactions" in file_registry:
-    df_txn = file_registry["transactions"]
-    df_txn["Date"] = pd.to_datetime(df_txn["Date"], errors="coerce")
+        first_date, last_date, income, expense, net = extract_transaction_summary(transactions_df)
+        total_assets, total_liabilities, total_equity = summarize_balance_sheet(accounts_df)
 
-    first_date, last_date = get_date_bounds(df_txn)
-    total_txns = len(df_txn)
-    income = df_txn[df_txn["Amount"] > 0]["Amount"].sum()
-    expenses = df_txn[df_txn["Amount"] < 0]["Amount"].sum()
-    net = income + expenses
+        st.subheader("📌 Overview Metrics")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Transactions", f"{len(transactions_df):,}")
+        col2.metric("First Transaction Date", first_date.strftime("%Y-%m-%d"))
+        col3.metric("Last Transaction Date", last_date.strftime("%Y-%m-%d"))
 
-    st.markdown("---")
-    st.subheader("📈 High-Level Overview")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Transactions", f"{total_txns:,}")
-    col2.metric("First Transaction", first_date.date())
-    col3.metric("Last Transaction", last_date.date())
-    col4.metric("Net Cash Flow", format_currency(net))
+        col4, col5, col6 = st.columns(3)
+        col4.metric("Total Income", format_currency(income))
+        col5.metric("Total Expenses", format_currency(expense))
+        col6.metric("Net Cash Flow", format_currency(net))
 
-    col5, col6, col7 = st.columns(3)
-    col5.metric("Total Income", format_currency(income))
-    col6.metric("Total Expenses", format_currency(expenses))
-
-# Placeholder for accounts CSV
-if "accounts" in file_registry:
-    df_acct = file_registry["accounts"]
-    try:
-        total_assets = df_acct[df_acct["Type"] == "Asset"]["Balance"].sum()
-        total_liabilities = df_acct[df_acct["Type"] == "Liability"]["Balance"].sum()
-        net_equity = total_assets - total_liabilities
+        col7, col8, col9 = st.columns(3)
+        col7.metric("Total Assets", format_currency(total_assets))
+        col8.metric("Total Liabilities", format_currency(total_liabilities))
+        col9.metric("Net Worth", format_currency(total_equity))
 
         st.markdown("---")
-        st.subheader("🏦 Accounts Overview")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Assets", format_currency(total_assets))
-        col2.metric("Liabilities", format_currency(total_liabilities))
-        col3.metric("Net Equity", format_currency(net_equity))
-    except:
-        st.warning("Accounts CSV found but does not have expected structure.")
+        st.info("You can also upload CSVs from **YNAB**, **Tiller**, **PocketSmith**, and others if formatted similarly.")
 
-st.markdown("---")
-st.caption("Note: Monarch Money allows CSV exports for: Transactions, Accounts, and Categories.")
-```
-
-# ---------- TAB 2: Transactions ----------
-
+# ------------------------------
+# Transactions Tab (Filters + Snapshots)
+# ------------------------------
 with tabs[1]:
-st.header("🧾 Transactions")
-if "transactions" in file_registry:
-df_txn = file_registry["transactions"]
+    st.header("📁 Transaction Explorer")
+    if uploaded_transactions:
+        transactions_df = load_csv(uploaded_transactions)
+        transactions_df['Date'] = pd.to_datetime(transactions_df['Date'])
 
-```
-    st.subheader("📅 Date Range Filters")
-    preset = st.selectbox("Date Range Presets", ["Year to Date", "Last 30 Days", "Last 90 Days", "Last 12 Months", "All Time"])
+        # Date Range Filters
+        today = dt.date.today()
+        presets = {
+            "Year to Date": (dt.date(today.year, 1, 1), today),
+            "Last 30 Days": (today - dt.timedelta(days=30), today),
+            "Last 90 Days": (today - dt.timedelta(days=90), today),
+            "Last Year": (today - relativedelta(years=1), today),
+        }
+        preset_label = st.selectbox("📆 Select Date Range Preset", options=list(presets.keys()))
+        start_date, end_date = presets[preset_label]
+        start_date = st.date_input("Start Date", value=start_date)
+        end_date = st.date_input("End Date", value=end_date)
 
-    today = datetime.date.today()
-    if preset == "Year to Date":
-        start = datetime.date(today.year, 1, 1)
-    elif preset == "Last 30 Days":
-        start = today - datetime.timedelta(days=30)
-    elif preset == "Last 90 Days":
-        start = today - datetime.timedelta(days=90)
-    elif preset == "Last 12 Months":
-        start = today - datetime.timedelta(days=365)
-    else:
-        start = df_txn["Date"].min().date()
-    end = today
+        filtered_df = transactions_df[(transactions_df['Date'] >= pd.to_datetime(start_date)) & (transactions_df['Date'] <= pd.to_datetime(end_date))]
 
-    df_filtered = df_txn[(df_txn["Date"] >= pd.to_datetime(start)) & (df_txn["Date"] <= pd.to_datetime(end))]
+        # Summary Metrics
+        st.subheader("📊 Summary Metrics")
+        col1, col2, col3 = st.columns(3)
+        income = filtered_df[filtered_df['Amount'] > 0]['Amount'].sum()
+        expense = filtered_df[filtered_df['Amount'] < 0]['Amount'].sum()
+        net = income + expense
+        col1.metric("Filtered Income", format_currency(income))
+        col2.metric("Filtered Expenses", format_currency(expense))
+        col3.metric("Filtered Net Flow", format_currency(net))
 
-    st.caption(f"Showing transactions from {start} to {end}.")
+        # Monthly Cash Flow Line Chart
+        st.subheader("📈 Monthly Cash Flow")
+        monthly = filtered_df.copy()
+        monthly['YearMonth'] = monthly['Date'].dt.to_period('M').astype(str)
+        monthly_summary = monthly.groupby('YearMonth')['Amount'].sum().reset_index()
+        fig = px.line(monthly_summary, x='YearMonth', y='Amount', markers=True)
+        fig.update_layout(yaxis_tickformat="$,.0f", xaxis_title="Month", yaxis_title="Cash Flow ($)")
+        st.plotly_chart(fig, use_container_width=True)
 
-    income = df_filtered[df_filtered["Amount"] > 0]["Amount"].sum()
-    expenses = df_filtered[df_filtered["Amount"] < 0]["Amount"].sum()
-    net = income + expenses
+        # TODO: Add snapshot tables by year/month/week breakdowns
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Income", format_currency(income))
-    col2.metric("Expenses", format_currency(expenses))
-    col3.metric("Net", format_currency(net))
-
-    st.subheader("📈 Monthly Cash Flow")
-    df_filtered["Month"] = df_filtered["Date"].dt.to_period("M")
-    df_plot = df_filtered.groupby("Month")["Amount"].sum().reset_index()
-    df_plot["Month"] = df_plot["Month"].astype(str)
-    fig = px.line(df_plot, x="Month", y="Amount", title="Cash Flow by Month")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("📊 Full Transaction Table")
-    st.dataframe(df_filtered, use_container_width=True)
-else:
-    st.info("Please upload a transactions CSV on the Dashboard tab.")
-```
-
-# ---------- TAB 3: Insights (Placeholder) ----------
-
-with tabs[2]:
-st.header("📈 Insights")
-st.write("Advanced visualizations, category-level volatility, rolling averages, savings rate, and burn rate coming soon.")
-
-# ---------- TAB 4: PDF Report (Placeholder) ----------
-
-with tabs[3]:
-st.header("📄 PDF Report Generator")
-st.write("Export your data as a client-friendly PDF. Will include key metrics, graphs, and optional notes.")
-
-# ---------- TAB 5: Loan Tracker ----------
-
-with tabs[4]:
-st.header("🧮 Loan Tracker & Leverage Analysis")
-st.info("Track your loans and compare payoff vs invest scenarios.")
-
-# ---------- TAB 6: Assistant ----------
-
+# ------------------------------
+# Assistant Tab
+# ------------------------------
 with tabs[5]:
-st.header("💬 Chat Assistant")
-st.write("Ask questions about your financial data or get help using this dashboard.")
-user_q = st.text_input("Ask something:")
-if user_q:
-st.info("(Chatbot integration coming soon — this will use OpenAI API or Langchain)")
+    st.header("💬 Chat With Your Data")
+    user_prompt = st.text_input("Ask a question about your finances:")
+    if user_prompt:
+        st.write("(AI response would go here...)")
+        # Placeholder logic
+        st.success("This will later connect to ChatGPT or an LLM backend to provide insights.")
 
-# ---------- TAB 7: Tools ----------
+# ------------------------------
+# Notes
+# ------------------------------
+# Tabs [2] [3] [4] to be built out incrementally as feature sets expand
+# Data ingestion from other CSV types (YNAB, Tiller) will require field mapping and format detection logic
 
-with tabs[6]:
-st.header("🧠 Tools & Calculators")
-st.subheader("Loan Calculator")
-with st.expander("🧮 Simple Loan Calculator"):
-loan_amt = st.number_input("Loan Amount", value=10000)
-rate = st.number_input("Interest Rate (%)", value=6.0)
-years = st.number_input("Term (years)", value=5)
-if st.button("Calculate Loan"):
-r = rate / 100 / 12
-n = years * 12
-pmt = loan_amt * r * ((1 + r) ** n) / (((1 + r) ** n) - 1)
-st.success(f"Monthly Payment: {format_currency(pmt)}")
-
-```
-st.markdown("---")
-st.caption("Future features: Retirement simulator, tax readiness score, savings goal planner, etc.")
-```
 
 
 
