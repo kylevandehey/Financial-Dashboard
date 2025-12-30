@@ -7,6 +7,12 @@ import seaborn as sns
 import plotly.express as px
 from datetime import datetime
 
+from src.categories import (
+    aggregate_expense_categories,
+    aggregate_income_categories,
+)
+from ui.category_metrics import render_category_metric_cards
+
 # App config
 st.set_page_config(layout="wide", page_title="Monarch+ Dashboard")
 
@@ -70,6 +76,30 @@ with tabs[0]:
         st.metric("Expenses", f"${-filtered_df[filtered_df['Amount'] < 0]['Amount'].sum():,.2f}")
         st.metric("Net", f"${filtered_df['Amount'].sum():,.2f}")
 
+        st.subheader("📊 Category Highlights")
+        expense_categories = aggregate_expense_categories(filtered_df)
+        income_categories = aggregate_income_categories(filtered_df)
+
+        expense_col, income_col = st.columns(2)
+        with expense_col:
+            st.caption("Top Expense Categories")
+            show_all_expenses = st.checkbox("Show all expense categories", value=False, key="show_all_expenses")
+            render_category_metric_cards(
+                expense_categories,
+                show_all=show_all_expenses,
+                top_n=5,
+                icon="💸",
+            )
+        with income_col:
+            st.caption("Top Income Categories")
+            show_all_income = st.checkbox("Show all income categories", value=False, key="show_all_income")
+            render_category_metric_cards(
+                income_categories,
+                show_all=show_all_income,
+                top_n=5,
+                icon="💰",
+            )
+
     else:
         st.warning("Please upload both Transactions and Accounts CSV files.")
 
@@ -124,7 +154,6 @@ with tabs[4]:
 with tabs[5]:
     st.header("💬 AI Assistant")
     st.info("Assistant functionality will be integrated here. Use this space to ask about your finances.")
-
 
 
 
