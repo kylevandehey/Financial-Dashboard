@@ -43,3 +43,28 @@ def test_smoke_imports():
     # Lightweight smoke test to ensure module imports and callable exists
     assert callable(normalize_transactions)
     assert isinstance(CANONICAL_COLUMNS, tuple) or isinstance(CANONICAL_COLUMNS, list)
+
+
+def test_normalize_accounts_maps_and_signs(tmp_path):
+    sample = tmp_path / "accounts.csv"
+    sample.write_text(
+        "Account,Type,Balance\n"
+        "Checking,Asset,1500\n"
+        "Credit Card,Liability,2500\n"
+    )
+
+    from src.ingest import normalize_accounts
+
+    df = normalize_accounts(sample)
+    assert list(df.columns) == [
+        "account",
+        "type",
+        "subtype",
+        "balance",
+        "signed_balance",
+        "is_asset",
+        "is_liability",
+        "institution",
+    ]
+    assert df.loc[df["account"] == "Checking", "signed_balance"].iloc[0] == 1500
+    assert df.loc[df["account"] == "Credit Card", "signed_balance"].iloc[0] == -2500

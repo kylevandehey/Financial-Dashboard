@@ -1,161 +1,102 @@
 # main.py
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.express as px
 from datetime import datetime
 
-from src.categories import (
-    aggregate_expense_categories,
-    aggregate_income_categories,
-)
-from ui.category_metrics import render_category_metric_cards
+import pandas as pd
+import streamlit as st
 
-# App config
+from src.date_filters import compute_date_range, filter_dataframe_by_date
+from src.ingest import normalize_accounts, normalize_transactions
+from ui.dashboard import render_dashboard_tab
+from ui.transactions_table import render_transactions_table
+
+
 st.set_page_config(layout="wide", page_title="Monarch+ Dashboard")
 
-# Session state init
-if "uploaded_files" not in st.session_state:
-    st.session_state.uploaded_files = {}
+st.title("Monarch+ Dashboard")
+st.caption("CFO-style control tower for your finances. Upload Monarch CSVs to get started.")
 
-# Placeholder login panel
-with st.sidebar:
-    st.markdown("#### 🔒 User Login (Coming Soon)")
-    st.text_input("Username")
-    st.text_input("Password", type="password")
-    st.caption("Authentication not required yet.")
+transactions_df: pd.DataFrame | None = None
+accounts_df: pd.DataFrame | None = None
 
-# Tabs (top navigation layout)
-tabs = st.tabs(["🏠 Dashboard", "📄 Transactions", "📊 Insights", "📈 Loan Tracker", "🧮 Loan Calculator", "💬 Assistant"])
+upload_col1, upload_col2 = st.columns(2)
+with upload_col1:
+    transactions_file = st.file_uploader("Upload Transactions CSV", type="csv", key="transactions")
+with upload_col2:
+    accounts_file = st.file_uploader("Upload Accounts CSV", type="csv", key="accounts")
 
-### --- TAB 1: DASHBOARD --- ###
-with tabs[0]:
-    st.title("Monarch+ Dashboard")
+if transactions_file:
+    try:
+        transactions_df = normalize_transactions(transactions_file)
+    except ValueError as exc:
+        st.error(f"Transactions CSV error: {exc}")
 
-    st.subheader("Upload Transactions CSV")
-    transactions_file = st.file_uploader("Upload Transactions File", type="csv", key="transactions")
+if accounts_file:
+    try:
+        accounts_df = normalize_accounts(accounts_file)
+    except ValueError as exc:
+        st.error(f"Accounts CSV error: {exc}")
 
-    st.subheader("Upload Accounts CSV")
-    accounts_file = st.file_uploader("Upload Accounts File", type="csv", key="accounts")
+years = (
+    sorted(transactions_df["year"].dropna().unique().tolist(), reverse=True)
+    if transactions_df is not None and not transactions_df.empty
+    else []
+)
+year_labels = ["ALL"] + [str(y) for y in years]
 
-    if transactions_file and accounts_file:
-        transactions_df = pd.read_csv(transactions_file)
-        accounts_df = pd.read_csv(accounts_file)
+primary_tabs = st.tabs(
+    ["🏠 Dashboard", "📄 Transactions", "📊 Insights", "📈 Loan Tracker", "🧮 Loan Calculator", "💬 Assistant"]
+)
 
-        # Auto-detect and convert date column
-        if 'Date' in transactions_df.columns:
-            transactions_df['Date'] = pd.to_datetime(transactions_df['Date'], errors='coerce')
-
-        if 'Type' in accounts_df.columns and 'Balance' in accounts_df.columns:
-            accounts_df['Type'] = accounts_df['Type'].str.lower()
-            total_assets = accounts_df[accounts_df['Type'] == 'asset']['Balance'].sum()
-            total_liabilities = accounts_df[accounts_df['Type'] == 'liability']['Balance'].sum()
-            total_equity = total_assets - total_liabilities
-
-            st.metric("Total Assets", f"${total_assets:,.2f}")
-            st.metric("Total Liabilities", f"${total_liabilities:,.2f}")
-            st.metric("Equity", f"${total_equity:,.2f}")
-        else:
-            st.error("Ensure 'Type' and 'Balance' columns exist in Accounts file.")
-
-        # Date filter
-        with st.expander("📅 Filter Date Range"):
-            start_date = st.date_input("Start Date", value=transactions_df['Date'].min().date())
-            end_date = st.date_input("End Date", value=transactions_df['Date'].max().date())
-
-        def filter_by_date(df, start_date, end_date):
-            df = df[df['Date'].notnull()]  # ensure no NaT
-            return df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
-
-        filtered_df = filter_by_date(transactions_df, start_date, end_date)
-
-        st.subheader("💰 Summary Metrics")
-        st.metric("Income", f"${filtered_df[filtered_df['Amount'] > 0]['Amount'].sum():,.2f}")
-        st.metric("Expenses", f"${-filtered_df[filtered_df['Amount'] < 0]['Amount'].sum():,.2f}")
-        st.metric("Net", f"${filtered_df['Amount'].sum():,.2f}")
-
-        st.subheader("📊 Category Highlights")
-        expense_categories = aggregate_expense_categories(filtered_df)
-        income_categories = aggregate_income_categories(filtered_df)
-
-        expense_col, income_col = st.columns(2)
-        with expense_col:
-            st.caption("Top Expense Categories")
-            show_all_expenses = st.checkbox("Show all expense categories", value=False, key="show_all_expenses")
-            render_category_metric_cards(
-                expense_categories,
-                show_all=show_all_expenses,
-                top_n=5,
-                icon="💸",
-            )
-        with income_col:
-            st.caption("Top Income Categories")
-            show_all_income = st.checkbox("Show all income categories", value=False, key="show_all_income")
-            render_category_metric_cards(
-                income_categories,
-                show_all=show_all_income,
-                top_n=5,
-                icon="💰",
+with primary_tabs[0]:
+    st.subheader("Dashboard")
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            render_dashboard_tab(
+                transactions_df,
+                accounts_df,
+                year_label=label,
             )
 
-    else:
-        st.warning("Please upload both Transactions and Accounts CSV files.")
+with primary_tabs[1]:
+    st.subheader("Transactions")
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            if transactions_df is None or transactions_df.empty:
+                st.info("Upload a Transactions CSV to explore table views.")
+                continue
+            if label == "ALL":
+                min_date = pd.to_datetime(transactions_df["date"]).min().date()
+                max_date = pd.to_datetime(transactions_df["date"]).max().date()
+                start_date, end_date = min_date, max_date
+            else:
+                start_date, end_date = compute_date_range("full_year", year=label)
+            filtered_tx = filter_dataframe_by_date(
+                transactions_df,
+                (start_date, end_date),
+                date_column="date",
+            )
+            render_transactions_table(filtered_tx)
 
-### --- TAB 2: TRANSACTIONS --- ###
-with tabs[1]:
-    st.header("📄 Transactions Viewer")
-    if transactions_file:
-        st.dataframe(transactions_df)
-    else:
-        st.info("Upload a Transactions file in the Dashboard tab.")
+with primary_tabs[2]:
+    st.subheader("Insights")
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            st.info("Insights pipeline will arrive in a future task.")
 
-### --- TAB 3: INSIGHTS --- ###
-with tabs[2]:
-    st.header("📊 Financial Insights")
-    if transactions_file:
-        st.subheader("Toggle Chart View")
-        chart_type = st.selectbox("Chart Type", ["Bar Chart", "Line Chart", "Pie Chart"])
-
-        category_grouped = filtered_df.groupby('Category')['Amount'].sum().sort_values()
-
-        if chart_type == "Bar Chart":
-            fig = px.bar(category_grouped, x=category_grouped.index, y=category_grouped.values, labels={'x':'Category', 'y':'Amount'})
-            st.plotly_chart(fig)
-        elif chart_type == "Pie Chart":
-            fig = px.pie(names=category_grouped.index, values=category_grouped.values)
-            st.plotly_chart(fig)
-        else:
-            fig = px.line(filtered_df.sort_values('Date'), x='Date', y='Amount', color='Category')
-            st.plotly_chart(fig)
-    else:
-        st.info("Upload data first in the Dashboard tab.")
-
-### --- TAB 4: LOAN TRACKER --- ###
-with tabs[3]:
-    st.header("📈 Loan Tracker")
+with primary_tabs[3]:
+    st.subheader("Loan Tracker")
     st.info("Coming soon — amortization tracking and payoff planning.")
 
-### --- TAB 5: LOAN CALCULATOR --- ###
-with tabs[4]:
-    st.header("🧮 Loan Calculator")
-    loan_amount = st.number_input("Loan Amount", value=10000)
-    interest_rate = st.number_input("Interest Rate (%)", value=5.0)
-    loan_term = st.number_input("Term (years)", value=5)
+with primary_tabs[4]:
+    st.subheader("Loan Calculator")
+    st.info("Calculator functionality will be wired in a future release.")
 
-    if loan_amount > 0 and interest_rate > 0 and loan_term > 0:
-        monthly_rate = interest_rate / 100 / 12
-        num_payments = loan_term * 12
-        monthly_payment = loan_amount * monthly_rate / (1 - (1 + monthly_rate)**-num_payments)
-        st.metric("Monthly Payment", f"${monthly_payment:,.2f}")
-
-### --- TAB 6: ASSISTANT --- ###
-with tabs[5]:
-    st.header("💬 AI Assistant")
-    st.info("Assistant functionality will be integrated here. Use this space to ask about your finances.")
-
-
+with primary_tabs[5]:
+    st.subheader("Assistant")
+    st.info("Assistant functionality will be integrated here.")
 
 
 

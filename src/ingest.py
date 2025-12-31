@@ -52,6 +52,23 @@ VARIANT_COLUMN_MAP: Mapping[str, str] = {
     "description": "notes",
 }
 
+ACCOUNT_VARIANT_MAP: Mapping[str, str] = {
+    "account": "account",
+    "account_name": "account",
+    "name": "account",
+    "type": "type",
+    "account_type": "type",
+    "category": "type",
+    "subtype": "subtype",
+    "group": "subtype",
+    "class": "subtype",
+    "balance": "balance",
+    "current_balance": "balance",
+    "available_balance": "balance",
+    "institution": "institution",
+    "provider": "institution",
+}
+
 
 def _normalize_column_name(column: str) -> str:
     """Normalize a raw column header for matching."""
@@ -174,3 +191,58 @@ def normalize_transactions(csv_file, *, today: date_cls | None = None) -> pd.Dat
     ordered_columns = [col for col in CANONICAL_COLUMNS if col in df.columns]
     return df[ordered_columns]
 
+
+def _build_account_mapping(raw_columns: Iterable[str]) -> MutableMapping[str, str]:
+    mapping: MutableMapping[str, str] = {}
+    normalized_columns = {_normalize_column_name(col): col for col in raw_columns}
+
+    required_targets = {"type", "balance"}
+
+    for normalized, original in normalized_columns.items():
+        if normalized in ACCOUNT_VARIANT_MAP:
+            canonical = ACCOUNT_VARIANT_MAP[normalized]
+            if canonical not in mapping:
+                mapping[canonical] = original
+
+    missing = [col for col in required_targets if col not in mapping]
+    if missing:
+        raise ValueError(
+            "Accounts CSV is missing required fields. "
+            f"Add the following columns: {', '.join(sorted(missing))}."
+        )
+
+    if "account" not in mapping:
+        mapping["account"] = next(iter(normalized_columns.values()))
+
+    return mapping
+
+
+def normalize_accounts(csv_file) -> pd.DataFrame:
+    """
+    Normalize an Accounts CSV into a consistent schema with signed balances.
+
+    Returns columns:
+        account, type, subtype, balance, signed_balance, is_asset, is_liability, institution
+    """
+    df = pd.read_csv(csv_file, encoding="utf-8", dtype=str)
+    mapping = _build_account_mapping(df.columns)
+    df = df.rename(columns={original: canonical for canonical, original in mapping.items()})
+
+    df["account"] = df["account"].astype(str).str.strip()
+    df["type"] = df["type"].astype(str).str.strip().str.lower()
+    if "subtype" not in df.columns:
+        df["subtype"] = ""
+    if "institution" not in df.columns:
+        df["institution"] = ""
+    df["subtype"] = df["subtype"].astype(str).str.strip().str.lower()
+    df["institution"] = df["institution"].astype(str).str.strip()
+    df["balance"] = df["balance"].apply(_parse_amount).astype(float)
+
+    df["is_asset"] = df["type"].str.contains("asset", na=False)
+    df["is_liability"] = df["type"].str.contains("liability|debt|loan|credit", na=False)
+
+    # If neither flag matches, assume asset to avoid hiding money
+    df.loc[~(df["is_asset"] | df["is_liability"]), "is_asset"] = True
+    df["signed_balance"] = df["balance"]
+    df.loc[df["is_liability"], "signed_balance"] = -df.loc[df["is_liability"], "balance"].abs()
+    return df[["account", "type", "subtype", "balance", "signed_balance", "is_asset", "is_liability", "institution"]]
