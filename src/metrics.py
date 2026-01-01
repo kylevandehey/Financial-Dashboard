@@ -33,7 +33,27 @@ class PeriodTotals:
         return max(min(self.net / self.income, 1.0), -1.0)
 
 
-def summarize_accounts(accounts: pd.DataFrame) -> Mapping[str, float]:
+def get_balances_snapshot(balances_df: pd.DataFrame, end_date: date) -> pd.DataFrame:
+    """
+    Select the latest balance per account as of end_date (inclusive).
+    """
+    if balances_df is None or balances_df.empty:
+        return pd.DataFrame(columns=["date", "account", "balance", "signed_balance", "is_asset", "is_liability", "subtype"])
+
+    working = balances_df.copy()
+    working["date"] = pd.to_datetime(working["date"]).dt.normalize()
+    cutoff = pd.to_datetime(end_date).normalize()
+    working = working.loc[working["date"] <= cutoff]
+    if working.empty:
+        return working
+
+    working = working.sort_values("date")
+    latest_indices = working.groupby("account")["date"].idxmax()
+    snapshot = working.loc[latest_indices].copy()
+    return snapshot
+
+
+def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = None) -> Mapping[str, float]:
     """
     Return total assets, liabilities, and net worth from normalized accounts data.
 
@@ -45,8 +65,14 @@ def summarize_accounts(accounts: pd.DataFrame) -> Mapping[str, float]:
     if accounts is None or accounts.empty:
         return {"total_assets": 0.0, "total_liabilities": 0.0, "net_worth": 0.0}
 
-    total_assets = float(accounts.loc[accounts["is_asset"], "signed_balance"].sum())
-    raw_liabilities = accounts.loc[accounts["is_liability"], "signed_balance"].sum()
+    working_accounts = accounts
+    if end_date is not None and "date" in accounts.columns:
+        working_accounts = get_balances_snapshot(accounts, end_date)
+    if working_accounts is None or working_accounts.empty:
+        return {"total_assets": 0.0, "total_liabilities": 0.0, "net_worth": 0.0}
+
+    total_assets = float(working_accounts.loc[working_accounts["is_asset"], "signed_balance"].sum())
+    raw_liabilities = working_accounts.loc[working_accounts["is_liability"], "signed_balance"].sum()
     # Force liabilities to be negative so accounting-formatting renders parentheses.
     total_liabilities = -abs(float(raw_liabilities))
     net_worth = total_assets + total_liabilities

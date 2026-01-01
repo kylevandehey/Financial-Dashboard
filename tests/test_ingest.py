@@ -48,15 +48,16 @@ def test_smoke_imports():
 def test_normalize_accounts_maps_and_signs(tmp_path):
     sample = tmp_path / "accounts.csv"
     sample.write_text(
-        "Account,Type,Balance\n"
-        "Checking,Asset,1500\n"
-        "Credit Card,Liability,2500\n"
+        "Date,Account,Type,Balance\n"
+        "2024-01-15,Checking,Asset,1500\n"
+        "2024-01-15,Credit Card,Liability,2500\n"
     )
 
     from src.ingest import normalize_accounts
 
     df = normalize_accounts(sample)
     assert list(df.columns) == [
+        "date",
         "account",
         "type",
         "subtype",

@@ -4,16 +4,17 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from src.ingest import normalize_accounts, normalize_transactions
+from src.config import APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE
+from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.benchmarking import render_benchmarking_tab
 from ui.dashboard import render_dashboard_tab
 from ui.transactions import render_transactions_tab
 
 
-st.set_page_config(layout="wide", page_title="Monarch+ Dashboard")
+st.set_page_config(layout="wide", page_title=APP_TITLE)
 
-st.title("Monarch+ Dashboard")
-st.caption("CFO-style control tower for your finances. Upload Monarch CSVs to get started.")
+st.title(APP_TITLE)
+st.caption(APP_SUBTITLE)
 
 transactions_df: Optional[pd.DataFrame] = None
 accounts_df: Optional[pd.DataFrame] = None
@@ -21,33 +22,34 @@ accounts_df: Optional[pd.DataFrame] = None
 with st.container(border=True):
     st.markdown("### Upload Monarch CSVs")
     st.caption(
-        "Upload both your Monarch Transactions CSV and Accounts CSV to initialize the dashboard. "
+        "Upload both your Monarch Transactions CSV and Accounts/Balances CSV to initialize the dashboard. "
         "Both files are required for accurate balance sheet and cash flow calculations."
     )
 
-    upload_col1, upload_col2 = st.columns(2)
-    with upload_col1:
-        transactions_file = st.file_uploader("Monarch Transactions CSV", type="csv", key="transactions")
-    with upload_col2:
-        accounts_file = st.file_uploader("Monarch Accounts CSV", type="csv", key="accounts")
+    uploaded_files = st.file_uploader(
+        "Upload Monarch CSVs",
+        accept_multiple_files=True,
+        type=["csv"],
+        key="monarch_csvs",
+    )
 
-    transactions_uploaded = transactions_file is not None
-    accounts_uploaded = accounts_file is not None
-
-    if transactions_uploaded and accounts_uploaded:
-        try:
-            transactions_df = normalize_transactions(transactions_file)
-        except ValueError as exc:
-            st.error(f"Transactions CSV error: {exc}")
-        try:
-            accounts_df = normalize_accounts(accounts_file)
-        except ValueError as exc:
-            st.error(f"Accounts CSV error: {exc}")
+    if not uploaded_files:
+        st.warning("Please upload both Transactions and Balances CSVs.")
+    elif len(uploaded_files) < 2:
+        st.warning("Please upload both Transactions and Balances CSVs.")
     else:
-        if not transactions_uploaded:
-            st.warning("Transactions CSV is required. Please add your Monarch Transactions export.")
-        if not accounts_uploaded:
-            st.warning("Accounts CSV is required. Please add your Monarch Accounts export.")
+        transactions_file, accounts_file, _diagnostics, error_message = identify_csv_roles(uploaded_files)
+        if error_message:
+            st.error(error_message)
+        else:
+            try:
+                transactions_df = normalize_transactions(transactions_file)
+            except ValueError as exc:
+                st.error(f"Transactions CSV error: {exc}")
+            try:
+                accounts_df = normalize_accounts(accounts_file)
+            except ValueError as exc:
+                st.error(f"Accounts CSV error: {exc}")
 
 years = (
     sorted(transactions_df["year"].dropna().unique().tolist(), reverse=True)
@@ -69,7 +71,7 @@ primary_tabs = st.tabs(
 )
 
 with primary_tabs[0]:
-    st.subheader("Dashboard")
+    st.subheader(DASHBOARD_TITLE)
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:

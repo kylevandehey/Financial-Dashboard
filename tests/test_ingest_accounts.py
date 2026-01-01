@@ -6,10 +6,10 @@ from src.ingest import normalize_accounts
 
 
 def test_infers_type_from_account_type_column():
-    csv_content = """account_name,account_type,subtype,balance
-Everyday Checking,checking account,checking,1500
-Travel Card,credit card,credit card,2500
-Home Loan,mortgage,secured loan,-350000
+    csv_content = """date,account_name,account_type,subtype,balance
+2024-01-01,Everyday Checking,checking account,checking,1500
+2024-01-01,Travel Card,credit card,credit card,2500
+2024-01-01,Home Loan,mortgage,secured loan,-350000
 """
     df = normalize_accounts(io.StringIO(csv_content))
 
@@ -22,10 +22,10 @@ Home Loan,mortgage,secured loan,-350000
 
 
 def test_classifies_using_balance_when_no_metadata():
-    csv_content = """account,balance
-Primary Checking,2500
-Travel Card,-750
-Zero Account,0
+    csv_content = """date,account,balance
+2024-02-01,Primary Checking,2500
+2024-02-01,Travel Card,-750
+2024-02-01,Zero Account,0
 """
     df = normalize_accounts(io.StringIO(csv_content))
 
@@ -37,10 +37,10 @@ Zero Account,0
 
 
 def test_requires_balance_column_when_no_classification_present():
-    csv_content = """account,category
-Primary Checking,deposit
+    csv_content = """date,account,category
+2024-01-01,Primary Checking,deposit
 """
     with pytest.raises(ValueError) as excinfo:
         normalize_accounts(io.StringIO(csv_content))
 
-    assert "No valid balance column was found to infer Assets vs Liabilities" in str(excinfo.value)
+    assert "Include Date, Account, and Balance columns" in str(excinfo.value)
