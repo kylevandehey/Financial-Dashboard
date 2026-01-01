@@ -61,11 +61,13 @@ ACCOUNT_VARIANT_MAP: Mapping[str, str] = {
     "account_name": "account",
     "name": "account",
     "type": "type",
-    "account_type": "type",
-    "category": "type",
+    "account_type": "account_type",
+    "category": "category",
     "subtype": "subtype",
-    "group": "subtype",
-    "class": "subtype",
+    "group": "account_group",
+    "account_group": "account_group",
+    "class": "account_group",
+    "balance_type": "balance_type",
     "balance": "balance",
     "current_balance": "balance",
     "available_balance": "balance",
@@ -204,7 +206,7 @@ def _build_account_mapping(raw_columns: Iterable[str]) -> MutableMapping[str, st
     mapping: MutableMapping[str, str] = {}
     normalized_columns = {_normalize_column_name(col): col for col in raw_columns}
 
-    required_targets = {"type", "balance"}
+    required_targets = {"balance"}
 
     for normalized, original in normalized_columns.items():
         if normalized in ACCOUNT_VARIANT_MAP:
@@ -232,22 +234,77 @@ def normalize_accounts(csv_file) -> pd.DataFrame:
     Returns columns:
         account, type, subtype, balance, signed_balance, is_asset, is_liability, institution
     """
+    classification_priority = ("type", "account_type", "subtype", "category", "account_group", "balance_type")
+    classification_error = (
+        "Accounts CSV could not be normalized.\n"
+        "Monarch exports account classification using fields such as account_type, subtype, or category.\n"
+        "No valid classification column was found to infer Asset vs Liability."
+    )
+
+    def _normalize_account_type_value(raw_value: str) -> str:
+        text = str(raw_value or "").strip().lower()
+        if not text:
+            return "Other"
+
+        if any(keyword in text for keyword in ("credit card", "credit", "card")):
+            return "Credit"
+        if any(keyword in text for keyword in ("loan", "mortgage", "liability", "debt", "payable")):
+            return "Liability"
+        if any(
+            keyword in text
+            for keyword in (
+                "asset",
+                "cash",
+                "checking",
+                "saving",
+                "savings",
+                "brokerage",
+                "invest",
+                "retire",
+                "401",
+                "ira",
+                "roth",
+                "property",
+                "home",
+            )
+        ):
+            return "Asset"
+        if "debit" in text:
+            return "Asset"
+        return "Other"
+
+    def _infer_account_type(row: pd.Series, available_columns: Iterable[str]) -> str:
+        for column in classification_priority:
+            if column in available_columns:
+                raw_value = str(row.get(column, "")).strip()
+                if raw_value:
+                    return _normalize_account_type_value(raw_value).title()
+        return "Other"
+
     df = pd.read_csv(csv_file, encoding="utf-8", dtype=str)
     mapping = _build_account_mapping(df.columns)
     df = df.rename(columns={original: canonical for canonical, original in mapping.items()})
 
-    df["account"] = df["account"].astype(str).str.strip()
-    df["type"] = df["type"].astype(str).str.strip().str.lower()
+    classification_columns = [col for col in classification_priority if col in df.columns]
+    if not classification_columns:
+        raise ValueError(classification_error)
+
+    for column in ("account", *classification_columns):
+        if column in df.columns:
+            df[column] = df[column].fillna("").astype(str).str.strip()
     if "subtype" not in df.columns:
         df["subtype"] = ""
     if "institution" not in df.columns:
         df["institution"] = ""
-    df["subtype"] = df["subtype"].astype(str).str.strip().str.lower()
     df["institution"] = df["institution"].astype(str).str.strip()
     df["balance"] = df["balance"].apply(_parse_amount).astype(float)
 
-    df["is_asset"] = df["type"].str.contains("asset", na=False)
-    df["is_liability"] = df["type"].str.contains("liability|debt|loan|credit", na=False)
+    if "type" not in df.columns:
+        df["type"] = df.apply(lambda row: _infer_account_type(row, classification_columns), axis=1)
+    df["type"] = df["type"].apply(_normalize_account_type_value).str.title()
+
+    df["is_asset"] = df["type"] == "Asset"
+    df["is_liability"] = df["type"].isin(["Liability", "Credit"])
 
     # If neither flag matches, assume asset to avoid hiding money
     df.loc[~(df["is_asset"] | df["is_liability"]), "is_asset"] = True
