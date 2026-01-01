@@ -23,6 +23,7 @@ CANONICAL_COLUMNS: Sequence[str] = (
     "merchant",
     "category",
     "account",
+    "transaction_type",
     "notes",
     "is_income",
     "is_expense",
@@ -47,9 +48,12 @@ VARIANT_COLUMN_MAP: Mapping[str, str] = {
     "category_name": "category",
     "account": "account",
     "account_name": "account",
+    "account_id": "account",
     "notes": "notes",
     "memo": "notes",
     "description": "notes",
+    "transaction_type": "transaction_type",
+    "type": "transaction_type",
 }
 
 ACCOUNT_VARIANT_MAP: Mapping[str, str] = {
@@ -176,6 +180,10 @@ def normalize_transactions(csv_file, *, today: date_cls | None = None) -> pd.Dat
     df["category"] = df["category"].fillna("").astype(str).str.strip()
     df["account"] = df["account"].fillna("").astype(str).str.strip()
     df["notes"] = df["notes"].fillna("").astype(str).str.strip()
+    if "transaction_type" not in df.columns:
+        df["transaction_type"] = ""
+    else:
+        df["transaction_type"] = df["transaction_type"].fillna("").astype(str).str.strip()
 
     df["is_income"] = df["amount"] > 0
     df["is_expense"] = df["amount"] < 0
