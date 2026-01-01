@@ -21,13 +21,26 @@ Home Loan,mortgage,secured loan,-350000
     assert mortgage_balance < 0
 
 
-def test_raises_when_no_classification_columns():
+def test_classifies_using_balance_when_no_metadata():
     csv_content = """account,balance
-Primary,1000
+Primary Checking,2500
+Travel Card,-750
+Zero Account,0
+"""
+    df = normalize_accounts(io.StringIO(csv_content))
+
+    assert df.loc[df["account"] == "Primary Checking", "type"].iloc[0] == "Asset"
+    assert bool(df.loc[df["account"] == "Primary Checking", "is_asset"].iloc[0]) is True
+    assert df.loc[df["account"] == "Travel Card", "type"].iloc[0] == "Liability"
+    assert bool(df.loc[df["account"] == "Travel Card", "is_liability"].iloc[0]) is True
+    assert df.loc[df["account"] == "Zero Account", "type"].iloc[0] == "Asset"
+
+
+def test_requires_balance_column_when_no_classification_present():
+    csv_content = """account,category
+Primary Checking,deposit
 """
     with pytest.raises(ValueError) as excinfo:
         normalize_accounts(io.StringIO(csv_content))
 
-    message = str(excinfo.value)
-    assert "could not be normalized" in message
-    assert "account_type, subtype, or category" in message
+    assert "No valid balance column was found to infer Assets vs Liabilities" in str(excinfo.value)
