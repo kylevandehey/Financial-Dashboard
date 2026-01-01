@@ -10,6 +10,7 @@ import plotly.express as px
 import streamlit as st
 
 from src.categories import format_accounting_currency
+from src.filters import TransactionFilterConfig, apply_transaction_config
 from src.date_filters import compute_date_range
 from src.metrics import (
     PeriodTotals,
@@ -20,7 +21,7 @@ from src.metrics import (
 )
 
 PRESET_OPTIONS = [
-    ("last_week_to_date", "Last WTD"),
+    ("last_week_to_date", "WTD"),
     ("mtd", "MTD"),
     ("ytd", "YTD"),
     ("q1", "Q1"),
@@ -238,6 +239,43 @@ def _render_top_categories(transactions: pd.DataFrame, date_range: Iterable[date
     st.caption("Showing top 5 expense categories by spend. 'Show more' coming soon.")
 
 
+def _render_transaction_configuration(year_label: str) -> TransactionFilterConfig:
+    st.markdown("#### Configure Transactions")
+    with st.container(border=True):
+        type_col, include_col, exclude_col = st.columns([1.2, 1.4, 1.4])
+
+        available_types = ["transfer", "payment", "refund", "adjustment"]
+        excluded_types = type_col.multiselect(
+            "Exclude types",
+            options=available_types,
+            default=list(st.session_state.get("excluded_transaction_types", [])),
+            key=f"excluded_types_dash_{year_label}",
+        )
+
+        include_keywords = include_col.text_input(
+            "Only include keywords",
+            value=", ".join(st.session_state.get("include_keywords", [])),
+            key=f"include_keywords_dash_{year_label}",
+            placeholder="paycheck, bonus",
+        )
+        exclude_keywords = exclude_col.text_input(
+            "Exclude keywords",
+            value=", ".join(st.session_state.get("exclude_keywords", [])),
+            key=f"exclude_keywords_dash_{year_label}",
+            placeholder="transfer, move",
+        )
+
+    config = TransactionFilterConfig.from_keyword_strings(
+        excluded_types=excluded_types,
+        include_keywords=include_keywords,
+        exclude_keywords=exclude_keywords,
+    )
+    st.session_state["excluded_transaction_types"] = config.excluded_types
+    st.session_state["include_keywords"] = config.include_keywords
+    st.session_state["exclude_keywords"] = config.exclude_keywords
+    return config
+
+
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     accounts: pd.DataFrame,
@@ -245,8 +283,11 @@ def render_dashboard_tab(
     year_label: str,
 ) -> None:
     preset, date_range = _render_global_controls(transactions, accounts, year_label=year_label)
+    config = _render_transaction_configuration(year_label)
 
-    totals = summarize_cash_flow(transactions, date_range)
+    working_transactions = apply_transaction_config(transactions, config)
+
+    totals = summarize_cash_flow(working_transactions, date_range)
     account_summary = summarize_accounts(accounts)
 
     _render_metric_cards(account_summary, totals)
@@ -262,4 +303,4 @@ def render_dashboard_tab(
         _render_donut(net_breakdown, "Net Worth Context")
 
     _render_cash_flow(totals)
-    _render_top_categories(transactions, date_range)
+    _render_top_categories(working_transactions, date_range)
