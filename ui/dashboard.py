@@ -16,6 +16,7 @@ from src.metrics import (
     PeriodTotals,
     build_cash_flow_chart_data,
     expense_category_pressure,
+    get_balances_snapshot,
     summarize_accounts,
     summarize_cash_flow,
 )
@@ -62,13 +63,13 @@ def _classify_liability(subtype: str) -> str:
     return "Unsecured"
 
 
-def _prepare_balance_breakdown(accounts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if accounts is None or accounts.empty:
+def _prepare_balance_breakdown(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if accounts_snapshot is None or accounts_snapshot.empty:
         empty = pd.DataFrame({"label": [], "amount": []})
         return empty, empty, empty
 
-    assets = accounts.loc[accounts["is_asset"]].copy()
-    liabilities = accounts.loc[accounts["is_liability"]].copy()
+    assets = accounts_snapshot.loc[accounts_snapshot["is_asset"]].copy()
+    liabilities = accounts_snapshot.loc[accounts_snapshot["is_liability"]].copy()
 
     assets["bucket"] = assets["subtype"].map(_classify_asset)
     liabilities["bucket"] = liabilities["subtype"].map(_classify_liability)
@@ -80,7 +81,7 @@ def _prepare_balance_breakdown(accounts: pd.DataFrame) -> tuple[pd.DataFrame, pd
         liabilities.groupby("bucket")["balance"].sum().abs().reset_index().rename(columns={"bucket": "label", "balance": "amount"})
     )
 
-    summary = summarize_accounts(accounts)
+    summary = summarize_accounts(accounts_snapshot)
     net_pie = pd.DataFrame(
         {
             "label": ["Assets", "Liabilities"],
@@ -288,12 +289,14 @@ def render_dashboard_tab(
     working_transactions = apply_transaction_config(transactions, config)
 
     totals = summarize_cash_flow(working_transactions, date_range)
-    account_summary = summarize_accounts(accounts)
+    end_date = date_range[1]
+    account_snapshot = get_balances_snapshot(accounts, end_date) if accounts is not None else accounts
+    account_summary = summarize_accounts(account_snapshot)
 
     _render_metric_cards(account_summary, totals)
 
     st.markdown("### Balance Sheet Composition")
-    asset_breakdown, liability_breakdown, net_breakdown = _prepare_balance_breakdown(accounts)
+    asset_breakdown, liability_breakdown, net_breakdown = _prepare_balance_breakdown(account_snapshot)
     asset_col, liability_col, net_col = st.columns(3)
     with asset_col:
         _render_donut(asset_breakdown, "Assets Breakdown")
