@@ -34,22 +34,20 @@ with st.container(border=True):
     transactions_uploaded = transactions_file is not None
     accounts_uploaded = accounts_file is not None
 
-    if transactions_uploaded:
+    if transactions_uploaded and accounts_uploaded:
         try:
             transactions_df = normalize_transactions(transactions_file)
         except ValueError as exc:
             st.error(f"Transactions CSV error: {exc}")
-
-    if accounts_uploaded:
         try:
             accounts_df = normalize_accounts(accounts_file)
         except ValueError as exc:
             st.error(f"Accounts CSV error: {exc}")
-
-    if not transactions_uploaded:
-        st.warning("Transactions CSV is required. Please add your Monarch Transactions export.")
-    if not accounts_uploaded:
-        st.warning("Accounts CSV is required. Please add your Monarch Accounts export.")
+    else:
+        if not transactions_uploaded:
+            st.warning("Transactions CSV is required. Please add your Monarch Transactions export.")
+        if not accounts_uploaded:
+            st.warning("Accounts CSV is required. Please add your Monarch Accounts export.")
 
 years = (
     sorted(transactions_df["year"].dropna().unique().tolist(), reverse=True)

@@ -67,7 +67,6 @@ ACCOUNT_VARIANT_MAP: Mapping[str, str] = {
     "group": "account_group",
     "account_group": "account_group",
     "class": "account_group",
-    "balance_type": "balance_type",
     "balance": "balance",
     "current_balance": "balance",
     "available_balance": "balance",
@@ -217,8 +216,7 @@ def _build_account_mapping(raw_columns: Iterable[str]) -> MutableMapping[str, st
     missing = [col for col in required_targets if col not in mapping]
     if missing:
         raise ValueError(
-            "Accounts CSV is missing required fields. "
-            f"Add the following columns: {', '.join(sorted(missing))}."
+            "Accounts CSV could not be processed. No valid balance column was found to infer Assets vs Liabilities."
         )
 
     if "account" not in mapping:
@@ -234,12 +232,7 @@ def normalize_accounts(csv_file) -> pd.DataFrame:
     Returns columns:
         account, type, subtype, balance, signed_balance, is_asset, is_liability, institution
     """
-    classification_priority = ("type", "account_type", "subtype", "category", "account_group", "balance_type")
-    classification_error = (
-        "Accounts CSV could not be normalized.\n"
-        "Monarch exports account classification using fields such as account_type, subtype, or category.\n"
-        "No valid classification column was found to infer Asset vs Liability."
-    )
+    classification_priority = ("type", "account_type", "subtype", "category", "account_group")
 
     def _normalize_account_type_value(raw_value: str) -> str:
         text = str(raw_value or "").strip().lower()
@@ -273,21 +266,27 @@ def normalize_accounts(csv_file) -> pd.DataFrame:
             return "Asset"
         return "Other"
 
-    def _infer_account_type(row: pd.Series, available_columns: Iterable[str]) -> str:
-        for column in classification_priority:
-            if column in available_columns:
-                raw_value = str(row.get(column, "")).strip()
-                if raw_value:
-                    return _normalize_account_type_value(raw_value).title()
-        return "Other"
+    def _infer_account_type(row: pd.Series, available_columns: Iterable[str]) -> str | None:
+        for column in available_columns:
+            raw_value = str(row.get(column, "")).strip()
+            if raw_value:
+                normalized = _normalize_account_type_value(raw_value).title()
+                if normalized != "Other":
+                    return normalized
+        return None
+
+    def _infer_from_balance(balance_value: float) -> str:
+        if balance_value > 0:
+            return "Asset"
+        if balance_value < 0:
+            return "Liability"
+        return "Asset"
 
     df = pd.read_csv(csv_file, encoding="utf-8", dtype=str)
     mapping = _build_account_mapping(df.columns)
     df = df.rename(columns={original: canonical for canonical, original in mapping.items()})
 
     classification_columns = [col for col in classification_priority if col in df.columns]
-    if not classification_columns:
-        raise ValueError(classification_error)
 
     for column in ("account", *classification_columns):
         if column in df.columns:
@@ -299,8 +298,11 @@ def normalize_accounts(csv_file) -> pd.DataFrame:
     df["institution"] = df["institution"].astype(str).str.strip()
     df["balance"] = df["balance"].apply(_parse_amount).astype(float)
 
-    if "type" not in df.columns:
-        df["type"] = df.apply(lambda row: _infer_account_type(row, classification_columns), axis=1)
+    df["type"] = df.apply(
+        lambda row: _infer_account_type(row, classification_columns)
+        or _infer_from_balance(float(row["balance"])),
+        axis=1,
+    )
     df["type"] = df["type"].apply(_normalize_account_type_value).str.title()
 
     df["is_asset"] = df["type"] == "Asset"
