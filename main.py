@@ -18,40 +18,37 @@ st.caption("CFO-style control tower for your finances. Upload Monarch CSVs to ge
 transactions_df: Optional[pd.DataFrame] = None
 accounts_df: Optional[pd.DataFrame] = None
 
-st.markdown(
-    "**Upload both your Monarch Transactions CSV and Accounts CSV to initialize the dashboard. "
-    "Both files are required for accurate balance sheet and cash flow calculations.**"
-)
 with st.container(border=True):
+    st.markdown("### Upload Monarch CSVs")
+    st.caption(
+        "Upload both your Monarch Transactions CSV and Accounts CSV to initialize the dashboard. "
+        "Both files are required for accurate balance sheet and cash flow calculations."
+    )
+
     upload_col1, upload_col2 = st.columns(2)
     with upload_col1:
-        transactions_file = st.file_uploader("Transactions CSV", type="csv", key="transactions")
+        transactions_file = st.file_uploader("Monarch Transactions CSV", type="csv", key="transactions")
     with upload_col2:
-        accounts_file = st.file_uploader("Accounts CSV", type="csv", key="accounts")
+        accounts_file = st.file_uploader("Monarch Accounts CSV", type="csv", key="accounts")
 
-    if transactions_file:
+    transactions_uploaded = transactions_file is not None
+    accounts_uploaded = accounts_file is not None
+
+    if transactions_uploaded:
         try:
             transactions_df = normalize_transactions(transactions_file)
         except ValueError as exc:
             st.error(f"Transactions CSV error: {exc}")
 
-    if accounts_file:
+    if accounts_uploaded:
         try:
             accounts_df = normalize_accounts(accounts_file)
         except ValueError as exc:
-            missing_type = "type" in str(exc).lower()
-            if missing_type:
-                st.error(
-                    "Accounts CSV error: Missing required column 'type'. "
-                    "Monarch typically labels this as the account category (e.g., Asset, Liability, Credit). "
-                    "Please include or map the column so ingestion can normalize accounts."
-                )
-            else:
-                st.error(f"Accounts CSV error: {exc}")
+            st.error(f"Accounts CSV error: {exc}")
 
-    if transactions_df is None and accounts_df is not None:
+    if not transactions_uploaded:
         st.warning("Transactions CSV is required. Please add your Monarch Transactions export.")
-    if accounts_df is None and transactions_df is not None:
+    if not accounts_uploaded:
         st.warning("Accounts CSV is required. Please add your Monarch Accounts export.")
 
 years = (
@@ -113,4 +110,3 @@ with primary_tabs[5]:
 with primary_tabs[6]:
     st.subheader("Assistant")
     st.info("Assistant functionality will be integrated here.")
-
