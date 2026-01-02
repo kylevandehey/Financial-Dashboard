@@ -14,7 +14,7 @@ from typing import Iterable, Mapping, Optional
 import pandas as pd
 
 from src.categories import aggregate_categories, format_accounting_currency
-from src.date_filters import filter_dataframe_by_date
+from src.date_filters import compute_date_range, filter_dataframe_by_date
 
 
 @dataclass
@@ -85,6 +85,39 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
         "total_liabilities": total_liabilities,
         "net_worth": net_worth,
     }
+
+
+def build_yearly_balance_trends(accounts: pd.DataFrame, *, preset: str = "full_year") -> pd.DataFrame:
+    """
+    Return yearly net worth, assets, and liabilities snapshots for YoY comparisons.
+    """
+    if accounts is None or accounts.empty or "date" not in accounts.columns:
+        return pd.DataFrame(columns=["year", "net_worth", "assets", "liabilities"])
+
+    working = accounts.copy()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce")
+    working = working.dropna(subset=["date"])
+    if working.empty:
+        return pd.DataFrame(columns=["year", "net_worth", "assets", "liabilities"])
+
+    years = sorted(working["date"].dt.year.unique())
+    rows: list[dict[str, float | int]] = []
+    for year in years:
+        try:
+            _, end_date = compute_date_range(preset, year=int(year))
+        except ValueError:
+            continue
+        summary = summarize_accounts(working, end_date=end_date)
+        rows.append(
+            {
+                "year": int(year),
+                "net_worth": summary["net_worth"],
+                "assets": summary["total_assets"],
+                "liabilities": summary["total_liabilities"],
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("year").reset_index(drop=True)
 
 
 def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] | None = None) -> PeriodTotals:
@@ -302,3 +335,38 @@ def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[dat
         value_name="amount",
     )
     return melted
+
+
+def build_yearly_income_expense(transactions: pd.DataFrame, *, months: set[int] | None = None) -> pd.DataFrame:
+    """
+    Aggregate yearly income and expenses to support YoY cash flow views.
+    """
+    if transactions is None or transactions.empty or "date" not in transactions.columns:
+        return pd.DataFrame(columns=["year", "income", "expenses", "net_cash_flow"])
+
+    working = transactions.copy()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce")
+    working = working.dropna(subset=["date"])
+    if months:
+        working = working.loc[working["date"].dt.month.isin(months)]
+    if working.empty:
+        return pd.DataFrame(columns=["year", "income", "expenses", "net_cash_flow"])
+
+    working["year"] = working["date"].dt.year
+
+    income = working.loc[working["is_income"]].groupby("year")["amount"].sum()
+    expenses = working.loc[working["is_expense"]].groupby("year")["amount"].sum()
+
+    all_years = sorted(working["year"].unique())
+    income = income.reindex(all_years, fill_value=0.0)
+    expenses = expenses.reindex(all_years, fill_value=0.0)
+
+    result = pd.DataFrame(
+        {
+            "year": all_years,
+            "income": income.values,
+            "expenses": expenses.values,
+        }
+    )
+    result["net_cash_flow"] = result["income"] + result["expenses"]
+    return result
