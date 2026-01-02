@@ -43,7 +43,12 @@ with tabs_by_label["Dashboard"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
                 year_label=label,
@@ -65,7 +70,12 @@ with tabs_by_label["Transactions"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
                 year_label=label,
@@ -84,7 +94,12 @@ with tabs_by_label["Compare"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
                 year_label=label,
@@ -104,7 +119,12 @@ with tabs_by_label["Insights"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
                 year_label=label,
@@ -124,7 +144,12 @@ with tabs_by_label["Loan Tracker"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
                 year_label=label,
@@ -144,7 +169,12 @@ with tabs_by_label["Tools"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            date_bounds = compute_scope_date_range(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                fallback_df=active_accounts,
+            )
             scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
             render_benchmarking_tab(active_transactions, scoped_accounts, year_label=label)
             st.info("Additional tools and calculators will be wired in a future release.")

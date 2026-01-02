@@ -6,15 +6,19 @@ from datetime import date
 from typing import Optional, Tuple
 
 import pandas as pd
+import altair as alt
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
+from src.formatting import format_currency, format_currency_series
 from src.metrics import (
     build_category_breakdown,
     build_monthly_cash_flow,
     build_yearly_balance_trends,
     build_yearly_income_expense,
+    get_balances_snapshot,
     summarize_cash_flow,
+    summarize_accounts,
 )
 
 _QUARTER_MONTHS: dict[str, set[int]] = {
@@ -32,11 +36,12 @@ def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(data).copy()
 
 
-def _format_currency(value: float) -> str:
-    """Format currency using accounting style for negatives."""
-    amount = float(value or 0)
-    formatted = f"${abs(amount):,.2f}"
-    return f"({formatted})" if amount < 0 else formatted
+def _currency_axis(title: str | None = None) -> alt.Axis:
+    """Altair axis with accounting-style label formatting."""
+    return alt.Axis(
+        title=title,
+        labelExpr="datum.value < 0 ? '($' + format(-datum.value, ',.0f') + ')' : '$' + format(datum.value, ',.0f')",
+    )
 
 
 def _render_header(year_label: str, selected_period: str, date_range: tuple[date, date]) -> None:
@@ -49,18 +54,31 @@ def _render_header(year_label: str, selected_period: str, date_range: tuple[date
     )
 
 
-def render_key_metrics(transactions: pd.DataFrame) -> None:
+def _render_data_grid(df: pd.DataFrame, *, title: str, height: int | None = None) -> None:
+    st.caption(title)
+    st.dataframe(df, use_container_width=True, height=height)
+
+
+def render_key_metrics(transactions: pd.DataFrame, accounts: pd.DataFrame, date_range: tuple[date, date]) -> None:
     """Render headline metrics with accounting-style formatting and guards."""
-    if transactions is None or transactions.empty:
+    if (transactions is None or transactions.empty) and (accounts is None or accounts.empty):
         st.info("No data available for selected filters.")
         return
 
     st.markdown("#### Key Metrics")
     totals = summarize_cash_flow(transactions)
-    st.metric("Transactions", f"{len(transactions.index):,}")
-    st.metric("Income", _format_currency(totals.income))
-    st.metric("Expenses", _format_currency(totals.expenses))
-    st.metric("Net Cash Flow", _format_currency(totals.net))
+    cols = st.columns(4)
+    cols[0].metric("Transactions", f"{len(transactions.index):,}" if not transactions.empty else "0")
+    cols[1].metric("Income", format_currency(totals.income))
+    cols[2].metric("Expenses", format_currency(totals.expenses))
+    cols[3].metric("Net Cash Flow", format_currency(totals.net))
+
+    account_summary = summarize_accounts(accounts, end_date=date_range[1] if accounts is not None and not accounts.empty else None)
+    if any(account_summary.values()):
+        asset_col, liability_col, net_col = st.columns(3)
+        asset_col.metric("Assets", format_currency(account_summary["total_assets"]))
+        liability_col.metric("Liabilities", format_currency(account_summary["total_liabilities"]))
+        net_col.metric("Net Worth", format_currency(account_summary["net_worth"]))
 
 
 def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date]) -> None:
@@ -74,9 +92,28 @@ def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date,
         st.info("Cash flow chart will appear after transactions are available for this period.")
         return
 
-    ordered = monthly.sort_values("period_order")
-    pivot = ordered.pivot(index="period_label", columns="flow", values="amount")
-    st.bar_chart(pivot)
+    ordered = monthly.sort_values("period_order").copy()
+    ordered["formatted_amount"] = ordered["amount"].map(format_currency)
+    chart = (
+        alt.Chart(ordered)
+        .mark_bar()
+        .encode(
+            x=alt.X("period_label:N", sort=ordered["period_label"].tolist(), title="Period"),
+            y=alt.Y("amount:Q", axis=_currency_axis("Amount")),
+            color=alt.Color("flow:N", title="Flow"),
+            tooltip=[
+                alt.Tooltip("period_label:N", title="Period"),
+                alt.Tooltip("flow:N", title="Flow"),
+                alt.Tooltip("formatted_amount:N", title="Amount"),
+            ],
+        )
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    display = ordered[["period_label", "flow", "amount"]].copy()
+    display["Amount"] = ordered["formatted_amount"]
+    display = display.rename(columns={"period_label": "Period", "flow": "Flow"})[["Period", "Flow", "Amount"]]
+    _render_data_grid(display, title="Cash Flow Data")
 
 
 def render_category_breakdown(transactions: pd.DataFrame) -> None:
@@ -89,7 +126,26 @@ def render_category_breakdown(transactions: pd.DataFrame) -> None:
     if breakdown.empty:
         st.info("Categories unavailable; upload data to see top categories.")
         return
-    st.bar_chart(breakdown.set_index("label")["amount"])
+
+    ordered = breakdown.sort_values("amount", ascending=True).copy()
+    ordered["formatted_amount"] = ordered["amount"].map(format_currency)
+    chart = (
+        alt.Chart(ordered)
+        .mark_bar()
+        .encode(
+            x=alt.X("amount:Q", axis=_currency_axis("Amount")),
+            y=alt.Y("label:N", sort=ordered["label"].tolist(), title="Category"),
+            tooltip=[
+                alt.Tooltip("label:N", title="Category"),
+                alt.Tooltip("formatted_amount:N", title="Amount"),
+            ],
+            color=alt.Color("label:N", legend=None),
+        )
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    display = ordered[["label", "formatted_amount"]].rename(columns={"label": "Category", "formatted_amount": "Amount"})
+    _render_data_grid(display, title="Category Data")
 
 
 def _latest_delta(df: pd.DataFrame, column: str) -> tuple[Optional[float], Optional[float], Optional[int]]:
@@ -112,8 +168,21 @@ def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str) -> None:
             st.info("Upload data to view year-over-year analytics.")
             return
 
-        chart_data = df.set_index("year")[[column]]
-        st.bar_chart(chart_data)
+        chart_data = df.sort_values("year").copy()
+        chart_data["formatted_amount"] = chart_data[column].map(format_currency)
+        chart = (
+            alt.Chart(chart_data)
+            .mark_bar()
+            .encode(
+                x=alt.X("year:O", title="Year"),
+                y=alt.Y(f"{column}:Q", axis=_currency_axis("Amount")),
+                tooltip=[
+                    alt.Tooltip("year:O", title="Year"),
+                    alt.Tooltip("formatted_amount:N", title="Amount"),
+                ],
+            )
+        )
+        st.altair_chart(chart, use_container_width=True)
 
         latest_value, delta_value, prior_year = _latest_delta(df, column)
         delta_pct = None
@@ -125,16 +194,19 @@ def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str) -> None:
 
         delta_display = "No prior year"
         if delta_value is not None and prior_year is not None:
-            delta_display = f"{_format_currency(delta_value)} vs {prior_year}"
+            delta_display = f"{format_currency(delta_value)} vs {prior_year}"
         st.metric(
             "Latest",
-            _format_currency(latest_value or 0.0),
+            format_currency(latest_value or 0.0),
             delta=delta_display,
         )
         if delta_pct is not None and prior_year is not None:
             st.caption(f"Δ % vs {prior_year}: {delta_pct:.1f}%")
         else:
             st.caption("Δ % vs prior year: N/A")
+
+        display = chart_data[["year", "formatted_amount"]].rename(columns={"formatted_amount": "Amount"})
+        _render_data_grid(display, title=f"{title} Data", height=175)
 
 
 def render_yoy_analytics(
@@ -169,6 +241,48 @@ def render_yoy_analytics(
             _render_yoy_metric_block(title, flow_trends, field)
 
 
+def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date]) -> None:
+    if accounts is None or accounts.empty:
+        return
+
+    st.markdown("#### Balance Snapshot")
+    snapshot = get_balances_snapshot(accounts, end_date=date_range[1])
+    if snapshot.empty:
+        st.info("No balances available for this period.")
+        return
+
+    summary = summarize_accounts(snapshot, end_date=date_range[1])
+    snapshot_display = snapshot.copy()
+    snapshot_display["Balance"] = format_currency_series(snapshot_display["signed_balance"])
+    snapshot_display = snapshot_display.rename(
+        columns={"account": "Account", "type": "Type", "subtype": "Subtype"}
+    )[["Account", "Type", "Subtype", "Balance"]]
+
+    aggregated = pd.DataFrame(
+        {
+            "label": ["Assets", "Liabilities", "Net Worth"],
+            "amount": [summary["total_assets"], summary["total_liabilities"], summary["net_worth"]],
+        }
+    )
+    aggregated["formatted_amount"] = aggregated["amount"].map(format_currency)
+
+    chart = (
+        alt.Chart(aggregated)
+        .mark_bar()
+        .encode(
+            x=alt.X("label:N", title=""),
+            y=alt.Y("amount:Q", axis=_currency_axis("Amount")),
+            tooltip=[
+                alt.Tooltip("label:N", title="Metric"),
+                alt.Tooltip("formatted_amount:N", title="Amount"),
+            ],
+            color=alt.Color("label:N", legend=None),
+        )
+    )
+    st.altair_chart(chart, use_container_width=True)
+    _render_data_grid(snapshot_display, title="Account Balances")
+
+
 def render_dashboard_tab(
     transactions_df: Optional[pd.DataFrame],
     accounts_df: Optional[pd.DataFrame],
@@ -187,9 +301,10 @@ def render_dashboard_tab(
         st.info("Upload transactions and accounts CSVs to enable full dashboard features.")
         return
 
-    render_key_metrics(transactions)
+    render_key_metrics(transactions, accounts, date_range)
     render_monthly_cash_flow(transactions, date_range)
     render_category_breakdown(transactions)
+    render_balance_snapshot(accounts, date_range)
 
     if year_label == ALL_YEARS_LABEL:
         render_yoy_analytics(
