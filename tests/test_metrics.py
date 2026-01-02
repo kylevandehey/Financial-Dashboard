@@ -34,6 +34,20 @@ def test_summarize_cash_flow_filters_by_range():
     assert totals.expenses == -2000
 
 
+def test_summarize_cash_flow_honors_prefiltered_input():
+    transactions = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-04-01", "2024-04-15"]),
+            "amount": [1000, -200],
+            "is_income": [True, False],
+            "is_expense": [False, True],
+        }
+    )
+    totals = summarize_cash_flow(transactions, None)
+    assert totals.income == 1000
+    assert totals.expenses == -200
+
+
 def test_category_pressure_orders_by_abs_spend():
     transactions = pd.DataFrame(
         {
@@ -48,6 +62,20 @@ def test_category_pressure_orders_by_abs_spend():
     top = expense_category_pressure(transactions, (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-12-31")))
     assert list(top["category"]) == ["Rent", "Dining"]
     assert list(top["total_amount"]) == [-2000, -125]
+
+
+def test_category_pressure_accepts_prefiltered_transactions():
+    transactions = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-02-01", "2024-02-02"]),
+            "category": ["Dining", "Dining"],
+            "amount": [-50, -25],
+            "is_income": [False, False],
+            "is_expense": [True, True],
+        }
+    )
+    top = expense_category_pressure(transactions, None)
+    assert list(top["total_amount"]) == [-75]
 
 
 def test_cash_flow_chart_formats_accounting():

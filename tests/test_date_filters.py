@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from src.date_filters import compute_date_range, filter_dataframe_by_date
+from src.date_filters import compute_date_range, compute_month_range, filter_dataframe_by_date, filter_dataframe_by_date_and_month
 
 
 def test_ytd_without_year_uses_today_anchor():
@@ -88,3 +88,32 @@ def test_filtering_missing_date_column_raises():
     df = pd.DataFrame({"Amount": [1, 2, 3]})
     with pytest.raises(ValueError):
         filter_dataframe_by_date(df, (date(2024, 1, 1), date(2024, 12, 31)), date_column="Date")
+
+
+def test_compute_month_range_returns_full_month():
+    start, end = compute_month_range(2024, 2)
+    assert start == date(2024, 2, 1)
+    assert end == date(2024, 2, 29)
+
+
+def test_filter_dataframe_by_date_and_month_across_years():
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2023-01-15", "2024-01-20", "2024-03-05", "2025-01-10"]),
+            "amount": [100, 200, 300, 400],
+        }
+    )
+    filtered = filter_dataframe_by_date_and_month(
+        df,
+        (date(2023, 1, 1), date(2025, 12, 31)),
+        months=[1],
+        date_column="date",
+    )
+    assert len(filtered) == 3
+    assert filtered["amount"].tolist() == [100, 200, 400]
+
+
+def test_filter_dataframe_by_date_and_month_rejects_invalid_month():
+    df = pd.DataFrame({"date": pd.to_datetime(["2024-01-01"]), "amount": [1]})
+    with pytest.raises(ValueError):
+        filter_dataframe_by_date_and_month(df, (date(2024, 1, 1), date(2024, 12, 31)), months=[0], date_column="date")

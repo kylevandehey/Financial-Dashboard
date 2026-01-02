@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -75,6 +75,18 @@ def compute_date_range(
     raise ValueError(f"Unsupported preset '{preset}'.")
 
 
+def compute_month_range(year: int, month: int) -> PresetRange:
+    """
+    Compute the start and end dates for a specific calendar month.
+    """
+    if month < 1 or month > 12:
+        raise ValueError("Month must be between 1 and 12.")
+
+    start_date = date(year, month, 1)
+    end_date = _end_of_month(year, month)
+    return start_date, end_date
+
+
 def filter_dataframe_by_date(
     df: pd.DataFrame, date_range: Iterable[date], date_column: str = "Date"
 ) -> pd.DataFrame:
@@ -103,6 +115,47 @@ def filter_dataframe_by_date(
     date_series = pd.to_datetime(df[date_column], errors="coerce")
     mask = (date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))
     return df.loc[mask].copy()
+
+
+def filter_dataframe_by_date_and_month(
+    df: pd.DataFrame,
+    date_range: Optional[Iterable[date]] = None,
+    *,
+    months: Optional[Sequence[int]] = None,
+    date_column: str = "Date",
+) -> pd.DataFrame:
+    """
+    Filter a DataFrame by date range and optional month set in a single pass.
+
+    Args:
+        df: Normalized transactions DataFrame.
+        date_range: Optional iterable with exactly (start_date, end_date).
+        months: Optional sequence of month numbers (1-12) to include.
+        date_column: The column containing datelike values.
+
+    Returns:
+        Filtered DataFrame constrained by the provided parameters. Returns the
+        original frame when inputs are empty or None.
+
+    Raises:
+        ValueError: If the date column is missing or invalid month values are provided.
+    """
+    if df is None or df.empty:
+        return df
+
+    working = df
+    if date_range is not None:
+        working = filter_dataframe_by_date(working, date_range, date_column=date_column)
+
+    if months:
+        valid_months = {int(month) for month in months if 1 <= int(month) <= 12}
+        if len(valid_months) != len(set(months)):
+            raise ValueError("Month filters must be integers between 1 and 12.")
+        date_series = pd.to_datetime(working[date_column], errors="coerce")
+        month_mask = date_series.dt.month.isin(valid_months)
+        working = working.loc[month_mask]
+
+    return working.copy()
 
 
 def _normalize_preset(preset: str) -> str:
