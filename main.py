@@ -5,9 +5,11 @@ import pandas as pd
 import streamlit as st
 
 from src.config import APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
+from src.filters import get_filtered_transactions
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.benchmarking import render_benchmarking_tab
 from ui.dashboard import render_dashboard_tab
+from ui.transaction_filters import render_transaction_filters
 from ui.transactions import render_transactions_tab
 
 
@@ -18,6 +20,7 @@ st.caption(APP_SUBTITLE)
 
 transactions_df: Optional[pd.DataFrame] = None
 accounts_df: Optional[pd.DataFrame] = None
+filtered_transactions: Optional[pd.DataFrame] = None
 
 with st.container(border=True):
     st.markdown("### Upload Monarch CSVs")
@@ -63,11 +66,13 @@ tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
 
 with tabs_by_label["Dashboard"]:
     st.subheader(DASHBOARD_TITLE)
+    render_transaction_filters()
+    filtered_transactions = get_filtered_transactions(transactions_df)
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
             render_dashboard_tab(
-                transactions_df,
+                filtered_transactions,
                 accounts_df,
                 year_label=label,
             )
@@ -77,7 +82,7 @@ with tabs_by_label["Transactions"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_transactions_tab(transactions_df, year_label=label)
+            render_transactions_tab(filtered_transactions, year_label=label)
 
 with tabs_by_label["Compare"]:
     st.subheader("Compare")
@@ -112,7 +117,7 @@ with tabs_by_label["Tools"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_benchmarking_tab(transactions_df, accounts_df, year_label=label)
+            render_benchmarking_tab(filtered_transactions, accounts_df, year_label=label)
             st.info("Additional tools and calculators will be wired in a future release.")
 
 with tabs_by_label["Assistance"]:

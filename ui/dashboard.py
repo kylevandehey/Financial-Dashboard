@@ -10,7 +10,6 @@ import plotly.express as px
 import streamlit as st
 
 from src.categories import format_accounting_currency
-from src.filters import TransactionFilterConfig, apply_transaction_config
 from src.date_filters import compute_date_range, compute_month_range, filter_dataframe_by_date_and_month
 from src.metrics import (
     PeriodTotals,
@@ -383,45 +382,8 @@ def _render_top_categories(transactions: pd.DataFrame) -> None:
     st.caption("Showing top 5 expense categories by spend. 'Show more' coming soon.")
 
 
-def _render_transaction_configuration(year_label: str) -> TransactionFilterConfig:
-    st.markdown("#### Configure Transactions")
-    with st.container(border=True):
-        type_col, include_col, exclude_col = st.columns([1.2, 1.4, 1.4])
-
-        available_types = ["transfer", "payment", "refund", "adjustment"]
-        excluded_types = type_col.multiselect(
-            "Exclude types",
-            options=available_types,
-            default=list(st.session_state.get("excluded_transaction_types", [])),
-            key=f"excluded_types_dash_{_key_fragment(year_label)}",
-        )
-
-        include_keywords = include_col.text_input(
-            "Only include keywords",
-            value=", ".join(st.session_state.get("include_keywords", [])),
-            key=f"include_keywords_dash_{_key_fragment(year_label)}",
-            placeholder="paycheck, bonus",
-        )
-        exclude_keywords = exclude_col.text_input(
-            "Exclude keywords",
-            value=", ".join(st.session_state.get("exclude_keywords", [])),
-            key=f"exclude_keywords_dash_{_key_fragment(year_label)}",
-            placeholder="transfer, move",
-        )
-
-    config = TransactionFilterConfig.from_keyword_strings(
-        excluded_types=excluded_types,
-        include_keywords=include_keywords,
-        exclude_keywords=exclude_keywords,
-    )
-    st.session_state["excluded_transaction_types"] = config.excluded_types
-    st.session_state["include_keywords"] = config.include_keywords
-    st.session_state["exclude_keywords"] = config.exclude_keywords
-    return config
-
-
 def render_dashboard_tab(
-    transactions: pd.DataFrame,
+    filtered_transactions: pd.DataFrame,
     accounts: pd.DataFrame,
     *,
     year_label: str,
@@ -429,17 +391,21 @@ def render_dashboard_tab(
     context = "all_years" if _year_from_label(year_label) is None else "single_year"
     today = date.today()
     available_start = (
-        pd.to_datetime(transactions["date"]).min().date() if transactions is not None and not transactions.empty else today
+        pd.to_datetime(filtered_transactions["date"]).min().date()
+        if filtered_transactions is not None and not filtered_transactions.empty
+        else today
     )
     available_end = (
-        pd.to_datetime(transactions["date"]).max().date() if transactions is not None and not transactions.empty else today
+        pd.to_datetime(filtered_transactions["date"]).max().date()
+        if filtered_transactions is not None and not filtered_transactions.empty
+        else today
     )
 
     month_tabs = st.tabs(MONTH_TAB_LABELS)
     for month_tab, month_label in zip(month_tabs, MONTH_TAB_LABELS):
         with month_tab:
             selected_preset, custom_range, use_custom, range_placeholder = _render_global_controls(
-                transactions,
+                filtered_transactions,
                 accounts,
                 year_label=year_label,
                 month_label=month_label,
@@ -447,9 +413,6 @@ def render_dashboard_tab(
                 available_start=available_start,
                 available_end=available_end,
             )
-            config = _render_transaction_configuration(year_label)
-            filtered_transactions = apply_transaction_config(transactions, config)
-
             date_range, month_filter = _resolve_time_scope(
                 selected_preset=selected_preset,
                 custom_range=custom_range,
