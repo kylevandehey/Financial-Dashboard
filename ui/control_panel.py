@@ -159,9 +159,10 @@ def render_control_panel() -> ControlPanelState:
     transactions_df, accounts_df, status_message, error_message = _ingest_csv_uploads(uploaded_files)
 
     period_options = period_options_for_scope(ALL_YEARS_LABEL)
-    default_period = st.session_state.get("period_selection") or period_options[0]
+    preferred_default = "ALL YEARS" if "ALL YEARS" in period_options else "FULL YEAR"
+    default_period = st.session_state.get("period_selection") or preferred_default
     if default_period not in period_options:
-        default_period = period_options[0]
+        default_period = preferred_default if preferred_default in period_options else period_options[0]
     period_container = st.sidebar.container()
     period_container.markdown("#### Period Selection")
     selected_period = period_container.radio(

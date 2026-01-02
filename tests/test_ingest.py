@@ -69,3 +69,18 @@ def test_normalize_accounts_maps_and_signs(tmp_path):
     ]
     assert df.loc[df["account"] == "Checking", "signed_balance"].iloc[0] == 1500
     assert df.loc[df["account"] == "Credit Card", "signed_balance"].iloc[0] == -2500
+
+
+def test_income_flags_exclude_transfers_and_adjustments():
+    csv_content = """Date,Amount,Merchant,Category,Account,Transaction Type,Notes
+2024-03-01,1500,Employer,Salary,Checking,Deposit,Paycheck
+2024-03-02,200,Transfer In,Transfer,Checking,Transfer,Internal move
+2024-03-03,-250,Payment,Transfer,Checking,Transfer,Card payment
+2024-03-04,-120,Grocery Store,Groceries,Checking,Debit,Weekly shop
+"""
+    df = normalize_transactions(io.StringIO(csv_content))
+
+    assert bool(df.loc[df["merchant"] == "Employer", "is_income"].iloc[0]) is True
+    assert bool(df.loc[df["merchant"] == "Transfer In", "is_income"].iloc[0]) is False
+    assert bool(df.loc[df["merchant"] == "Payment", "is_expense"].iloc[0]) is False
+    assert bool(df.loc[df["merchant"] == "Grocery Store", "is_expense"].iloc[0]) is True

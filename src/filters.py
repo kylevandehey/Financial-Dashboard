@@ -174,7 +174,9 @@ def get_filtered_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
 
 def period_options_for_scope(year_label: str) -> list[str]:
     """Return the allowed period options for a given year tab."""
-    return ["ALL YEARS", "Q1", "Q2", "Q3", "Q4"] if str(year_label).upper() == ALL_YEARS_LABEL else ["FULL YEAR", "Q1", "Q2", "Q3", "Q4"]
+    if str(year_label).upper() == ALL_YEARS_LABEL:
+        return ["Q1", "Q2", "Q3", "Q4", "ALL YEARS"]
+    return ["Q1", "Q2", "Q3", "Q4", "FULL YEAR"]
 
 
 def _normalize_year_label(year_label: Optional[str]) -> Optional[int]:
