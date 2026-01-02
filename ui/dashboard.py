@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
@@ -10,6 +11,7 @@ import plotly.express as px
 import streamlit as st
 
 from src.categories import format_accounting_currency
+from src.config import ALL_YEARS_LABEL
 from src.date_filters import compute_date_range, compute_month_range, filter_dataframe_by_date_and_month
 from src.metrics import (
     PeriodTotals,
@@ -22,20 +24,27 @@ from src.metrics import (
     summarize_cash_flow,
 )
 
-ALL_PRESET_OPTIONS = [
+ALL_MONTHS_LABEL = "ALL MONTHS"
+CURRENT_YEAR_PRESETS = [
+    ("last_week_to_date", "WTD"),
+    ("mtd", "MTD"),
+    ("ytd", "YTD"),
+    ("full_year", "Full Year"),
     ("q1", "Q1"),
     ("q2", "Q2"),
     ("q3", "Q3"),
     ("q4", "Q4"),
 ]
-YEAR_PRESET_OPTIONS = [
-    ("last_week_to_date", "WTD"),
-    ("mtd", "MTD"),
-    ("ytd", "YTD"),
-    *ALL_PRESET_OPTIONS,
+HISTORICAL_YEAR_PRESETS = [
+    ("full_year", "Full Year"),
+    ("q1", "Q1"),
+    ("q2", "Q2"),
+    ("q3", "Q3"),
+    ("q4", "Q4"),
 ]
+ALL_YEARS_PRESETS = [("all_years_span", "All Years")]
 MONTH_TAB_LABELS = [
-    "All Months",
+    ALL_MONTHS_LABEL,
     "Jan",
     "Feb",
     "Mar",
@@ -72,7 +81,8 @@ QUARTER_MONTHS: dict[str, set[int]] = {
 
 
 def _year_from_label(label: str) -> Optional[int]:
-    if label.upper() == "ALL":
+    normalized = str(label).strip().upper()
+    if normalized in {"ALL", ALL_YEARS_LABEL}:
         return None
     try:
         return int(label)
@@ -86,7 +96,28 @@ def _key_fragment(label: str) -> str:
 
 def _month_from_label(label: str) -> Optional[int]:
     normalized = label.lower().strip()
+    if normalized == ALL_MONTHS_LABEL.lower():
+        return None
     return MONTH_NAME_TO_NUMBER.get(normalized)
+
+
+@dataclass
+class ScopeSelection:
+    """Resolved filters for the current year/month scope."""
+
+    date_range: tuple[date, date]
+    month_filter: Optional[Sequence[int]]
+    scope_context: str
+
+
+def _preset_options(year_context: Optional[int], *, is_month_scope: bool, today: date) -> list[tuple[str, str]]:
+    if is_month_scope:
+        return []
+
+    if year_context is None:
+        return ALL_YEARS_PRESETS
+
+    return CURRENT_YEAR_PRESETS if year_context == today.year else HISTORICAL_YEAR_PRESETS
 
 
 def _render_donut(chart_df: pd.DataFrame, title: str, color_sequence: Optional[list[str]] = None) -> None:
@@ -117,9 +148,13 @@ def _render_global_controls(
     available_end: date,
 ) -> tuple[str, tuple[date, date], bool, st.delta_generator.DeltaGenerator]:
     st.markdown("### Global Controls")
-    preset_key = f"preset_{_key_fragment(year_label)}_{_key_fragment(month_label)}"
-    custom_key = f"custom_dates_{_key_fragment(year_label)}_{_key_fragment(month_label)}"
-    use_custom_key = f"use_custom_{_key_fragment(year_label)}_{_key_fragment(month_label)}"
+    key_prefix = f"dashboard_{_key_fragment(year_label)}_{_key_fragment(month_label)}"
+    preset_key = f"preset_{key_prefix}"
+    custom_key = f"custom_dates_{key_prefix}"
+    use_custom_key = f"use_custom_{key_prefix}"
+
+    is_month_scope = month_label != ALL_MONTHS_LABEL
+    available_presets = _preset_options(_year_from_label(year_label), is_month_scope=is_month_scope, today=date.today())
 
     with st.container(border=True):
         status_col, preset_col, custom_col, info_col = st.columns([1.2, 2.4, 2.4, 1.4])
@@ -140,19 +175,18 @@ def _render_global_controls(
 
         with preset_col:
             st.caption("Preset Ranges")
-            if month_label != "All Months":
-                st.info("Month tab active — quarter presets are hidden.")
+            if not available_presets:
+                st.info("Month tab active — presets are controlled by the tab scope.")
                 selected_label = "month_scope"
             else:
-                preset_options = ALL_PRESET_OPTIONS if context == "all_years" else YEAR_PRESET_OPTIONS
-                preset_values = [value for value, _ in preset_options]
-                default_index = preset_values.index("ytd") if "ytd" in preset_values else 0
+                preset_values = [value for value, _ in available_presets]
+                default_label = "ytd" if "ytd" in preset_values else preset_values[0]
                 selected_label = st.radio(
                     "Period",
                     options=preset_values,
-                    format_func=lambda x: dict(preset_options)[x],
+                    format_func=lambda x: dict(available_presets)[x],
                     horizontal=True,
-                    index=default_index,
+                    index=preset_values.index(default_label),
                     key=preset_key,
                 )
 
@@ -193,7 +227,9 @@ def _resolve_time_scope(
     context: str,
     available_start: date,
     available_end: date,
-) -> tuple[tuple[date, date], Optional[Sequence[int]]]:
+    *,
+    today: date,
+) -> ScopeSelection:
     year_context = _year_from_label(year_label)
     month_number = _month_from_label(month_label)
     month_filter: Optional[Sequence[int]] = None
@@ -202,21 +238,22 @@ def _resolve_time_scope(
         base_range = custom_range
     elif context == "all_years":
         base_range = (available_start, available_end)
+    elif month_number and year_context:
+        base_range = compute_month_range(year_context, month_number)
     else:
+        preset_for_range = selected_preset if selected_preset not in {"month_scope", "all_years_span"} else "full_year"
         base_range = compute_date_range(
-            selected_preset if selected_preset != "month_scope" else "ytd",
+            preset_for_range,
             year=year_context,
+            today=today,
         )
-
-    if context == "all_years":
-        month_filter = QUARTER_MONTHS.get(selected_preset)
 
     if month_number:
         month_filter = {month_number}
-        if year_context:
-            base_range = compute_month_range(year_context, month_number)
+    elif year_context:
+        month_filter = QUARTER_MONTHS.get(selected_preset)
 
-    return base_range, month_filter
+    return ScopeSelection(date_range=base_range, month_filter=month_filter, scope_context=context)
 
 
 def _determine_active_range(transactions: Optional[pd.DataFrame], fallback_range: tuple[date, date]) -> tuple[date, date]:
@@ -331,7 +368,7 @@ def render_dashboard_tab(
                 available_start=available_start,
                 available_end=available_end,
             )
-            date_range, month_filter = _resolve_time_scope(
+            scope = _resolve_time_scope(
                 selected_preset=selected_preset,
                 custom_range=custom_range,
                 use_custom=use_custom,
@@ -340,22 +377,23 @@ def render_dashboard_tab(
                 context=context,
                 available_start=available_start,
                 available_end=available_end,
+                today=today,
             )
             scoped_transactions = filter_dataframe_by_date_and_month(
                 filtered_transactions,
-                date_range,
-                months=month_filter,
+                scope.date_range,
+                months=scope.month_filter,
                 date_column="date",
             )
-            active_range = _determine_active_range(scoped_transactions, date_range)
+            active_range = _determine_active_range(scoped_transactions, scope.date_range)
             range_placeholder.metric(
                 label="Dates",
                 value=f"{active_range[0].isoformat()} → {active_range[1].isoformat()}",
             )
 
-            totals = summarize_cash_flow(scoped_transactions)
+            totals = summarize_cash_flow(scoped_transactions, scope.date_range)
             end_date = active_range[1]
-            account_snapshot = get_balances_snapshot(accounts, end_date) if accounts is not None else accounts
+            account_snapshot = get_balances_snapshot(accounts, None if scope.scope_context == "all_years" else end_date) if accounts is not None else accounts
             account_summary = summarize_accounts(account_snapshot)
 
             _render_metric_cards(account_summary, totals)

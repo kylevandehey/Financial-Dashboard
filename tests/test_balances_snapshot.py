@@ -45,3 +45,22 @@ def test_summarize_accounts_uses_snapshot_for_totals():
     assert summary["total_assets"] == 5000
     assert summary["total_liabilities"] == 0
     assert summary["net_worth"] == 5000
+
+
+def test_get_balances_snapshot_all_years_uses_latest_rows():
+    balances = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2023-12-31", "2024-01-15", "2024-02-01"]),
+            "account": ["Brokerage", "Brokerage", "Savings"],
+            "balance": [5000, 7500, 1200],
+            "signed_balance": [5000, 7500, 1200],
+            "is_asset": [True, True, True],
+            "is_liability": [False, False, False],
+            "subtype": ["investment", "investment", "checking"],
+        }
+    )
+
+    snapshot = get_balances_snapshot(balances, None)
+
+    assert set(snapshot["account"]) == {"Brokerage", "Savings"}
+    assert snapshot.loc[snapshot["account"] == "Brokerage", "balance"].iloc[0] == 7500

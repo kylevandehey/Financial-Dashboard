@@ -33,16 +33,20 @@ class PeriodTotals:
         return max(min(self.net / self.income, 1.0), -1.0)
 
 
-def get_balances_snapshot(balances_df: pd.DataFrame, end_date: date) -> pd.DataFrame:
+def get_balances_snapshot(balances_df: pd.DataFrame, end_date: Optional[date]) -> pd.DataFrame:
     """
-    Select the latest balance per account as of end_date (inclusive).
+    Select the latest balance per account up to end_date (inclusive).
+
+    When end_date is None, the latest available balance per account is returned
+    without truncating the dataset. This supports ALL YEARS views where the
+    full balances CSV should be considered.
     """
     if balances_df is None or balances_df.empty:
         return pd.DataFrame(columns=["date", "account", "balance", "signed_balance", "is_asset", "is_liability", "subtype"])
 
     working = balances_df.copy()
     working["date"] = pd.to_datetime(working["date"]).dt.normalize()
-    cutoff = pd.to_datetime(end_date).normalize()
+    cutoff = pd.to_datetime(end_date).normalize() if end_date is not None else working["date"].max()
     working = working.loc[working["date"] <= cutoff]
     if working.empty:
         return working
