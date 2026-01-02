@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
+from src.formatting import format_date_range
 
 
 def _coerce_dataframe(data: pd.DataFrame | None) -> pd.DataFrame:
@@ -20,6 +21,7 @@ def render_insights_tab(
     *,
     year_label: str,
     selected_period: str,
+    date_range: tuple,
 ) -> None:
     year_context = year_label or ALL_YEARS_LABEL
     scoped_transactions = _coerce_dataframe(transactions_df)
@@ -27,6 +29,8 @@ def render_insights_tab(
 
     st.markdown("### Insights (Financial IQ layer)")
     st.caption(f"Scope: {year_context} · Period: {selected_period}")
+    st.caption("Date Range")
+    st.caption(format_date_range(date_range))
     if scoped_transactions.empty and scoped_accounts.empty:
         st.info("Upload transactions and accounts CSVs to unlock insights.")
         return

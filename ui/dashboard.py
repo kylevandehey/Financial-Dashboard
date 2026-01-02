@@ -10,7 +10,7 @@ import altair as alt
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.formatting import format_currency
+from src.formatting import format_currency, format_date_range
 from src.metrics import (
     build_category_breakdown,
     build_monthly_cash_flow,
@@ -46,12 +46,10 @@ def _currency_axis(title: str | None = None) -> alt.Axis:
 
 def _render_header(year_label: str, selected_period: str, date_range: tuple[date, date]) -> None:
     """Render the dashboard heading and scope context."""
-    start_date, end_date = date_range
     st.markdown("### Dashboard Overview")
-    st.caption(
-        f"Scope: {year_label} · Period: {selected_period} · "
-        f"{start_date.strftime('%b %d, %Y')} → {end_date.strftime('%b %d, %Y')}"
-    )
+    st.caption(f"Scope: {year_label} · Period: {selected_period}")
+    st.caption("Date Range")
+    st.caption(format_date_range(date_range))
 
 
 def _render_data_grid(df: pd.DataFrame, *, title: str, height: int | None = None) -> None:
@@ -110,7 +108,12 @@ def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date,
             x=alt.X("period_label:N", sort=ordered["period_label"].tolist(), title="Period"),
             xOffset="flow",
             y=alt.Y("amount:Q", axis=_currency_axis("Amount")),
-            color=alt.Color("flow:N", title="Flow", sort=["Income", "Expenses"]),
+            color=alt.Color(
+                "flow:N",
+                title="Flow",
+                sort=["Income", "Expenses"],
+                scale=alt.Scale(domain=["Income", "Expenses"], range=["#2e7d32", "#c62828"]),
+            ),
             tooltip=[
                 alt.Tooltip("period_label:N", title="Period"),
                 alt.Tooltip("flow:N", title="Flow"),
@@ -271,20 +274,23 @@ def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date
     )
     aggregated["display_amount"] = aggregated["amount"].abs()
     aggregated["formatted_amount"] = aggregated["amount"].map(format_currency)
+    aggregated["label_with_amount"] = aggregated["label"] + ": " + aggregated["formatted_amount"]
 
-    chart = (
-        alt.Chart(aggregated)
-        .mark_arc()
-        .encode(
-            theta=alt.Theta("display_amount:Q", stack=True),
-            color=alt.Color("label:N", title=""),
-            tooltip=[
-                alt.Tooltip("label:N", title="Metric"),
-                alt.Tooltip("formatted_amount:N", title="Amount"),
-            ],
-        )
+    base = alt.Chart(aggregated)
+    pie = base.mark_arc().encode(
+        theta=alt.Theta("display_amount:Q", stack=True),
+        color=alt.Color("label:N", title=""),
+        tooltip=[
+            alt.Tooltip("label:N", title="Metric"),
+            alt.Tooltip("formatted_amount:N", title="Amount"),
+        ],
     )
-    st.altair_chart(chart, use_container_width=True)
+    labels = base.mark_text(radius=120, size=12).encode(
+        theta=alt.Theta("display_amount:Q", stack=True),
+        color=alt.Color("label:N", legend=None),
+        text=alt.Text("label_with_amount:N"),
+    )
+    st.altair_chart(pie + labels, use_container_width=True)
     balance_table = aggregated[["label", "formatted_amount"]].rename(
         columns={"label": "Metric", "formatted_amount": "Amount"}
     )

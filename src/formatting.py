@@ -6,7 +6,10 @@ accounting-style convention (negative values in parentheses, no negative sign).
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pandas as pd
+from pandas import Timestamp
 
 
 def format_currency(value: float) -> str:
@@ -42,3 +45,23 @@ def format_currency_series(amounts: pd.Series) -> pd.Series:
     formatted.loc[negatives] = formatted.loc[negatives].map(lambda x: f"({x})")
     formatted.loc[numeric_amounts.isna()] = ""
     return formatted
+
+
+def format_date_range(value: tuple[date | datetime | Timestamp, date | datetime | Timestamp] | None) -> str:
+    """
+    Return a human-readable date range label consistent across tabs.
+    """
+    if not value:
+        return ""
+
+    try:
+        start, end = value
+    except Exception:
+        return ""
+
+    start_dt = pd.to_datetime(start, errors="coerce")
+    end_dt = pd.to_datetime(end, errors="coerce")
+    if pd.isna(start_dt) or pd.isna(end_dt):
+        return ""
+
+    return f"{start_dt.strftime('%b %d, %Y')} → {end_dt.strftime('%b %d, %Y')}"

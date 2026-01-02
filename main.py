@@ -87,6 +87,7 @@ with tabs_by_label["Transactions"]:
                 active_accounts,
                 year_label=label,
                 selected_period=control_state.selected_period,
+                date_range=date_bounds,
             )
 
 with tabs_by_label["Compare"]:
@@ -112,6 +113,7 @@ with tabs_by_label["Compare"]:
                 scoped_accounts,
                 year_label=label,
                 selected_period=control_state.selected_period,
+                date_range=date_bounds,
             )
 
 with tabs_by_label["Insights"]:
@@ -137,6 +139,7 @@ with tabs_by_label["Insights"]:
                 scoped_accounts,
                 year_label=label,
                 selected_period=control_state.selected_period,
+                date_range=date_bounds,
             )
 
 with tabs_by_label["Loan Tracker"]:

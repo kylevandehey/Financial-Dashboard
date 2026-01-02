@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
+from src.formatting import format_date_range
 from ui.transactions_table import render_transactions_table
 
 
@@ -25,12 +26,15 @@ def render_transactions_tab(
     *,
     year_label: str,
     selected_period: str,
+    date_range: tuple,
 ) -> None:
     year_context = year_label or ALL_YEARS_LABEL
     scoped_transactions = _coerce_dataframe(transactions)
 
     st.markdown("### Transactions")
     st.caption(f"Scope: {year_context} · Period: {selected_period}")
+    st.caption("Date Range")
+    st.caption(format_date_range(date_range))
     if scoped_transactions.empty:
         st.info("No data available for selected filters.")
         return

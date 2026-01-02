@@ -79,6 +79,34 @@ ACCOUNT_VARIANT_MAP: Mapping[str, str] = {
     "provider": "institution",
 }
 
+# Explicit income classification to prevent positive transfers or adjustments from inflating income.
+INCOME_CATEGORY_KEYWORDS: tuple[str, ...] = (
+    "income",
+    "salary",
+    "wage",
+    "wages",
+    "payroll",
+    "paycheck",
+    "bonus",
+    "interest",
+    "dividend",
+    "dividends",
+    "capital gains",
+    "rental",
+)
+
+TRANSFER_LIKE_KEYWORDS: tuple[str, ...] = (
+    "transfer",
+    "reimbursement",
+    "reimb",
+    "adjustment",
+    "balance transfer",
+    "payment",
+    "internal",
+    "settlement",
+    "opening balance",
+)
+
 
 @dataclass
 class CSVDetection:
@@ -239,8 +267,17 @@ def normalize_transactions(csv_file, *, today: date_cls | None = None) -> pd.Dat
     else:
         df["transaction_type"] = df["transaction_type"].fillna("").astype(str).str.strip()
 
-    df["is_income"] = df["amount"] > 0
-    df["is_expense"] = df["amount"] < 0
+    category_text = df["category"].str.lower()
+    type_text = df["transaction_type"].str.lower()
+    notes_text = df["notes"].str.lower()
+    transfer_haystack = category_text + " " + type_text + " " + notes_text
+    transfer_mask = transfer_haystack.apply(lambda text: any(keyword in text for keyword in TRANSFER_LIKE_KEYWORDS))
+    income_category_mask = category_text.apply(lambda text: any(keyword in text for keyword in INCOME_CATEGORY_KEYWORDS))
+    income_type_mask = type_text.str.contains("income", regex=False)
+    # Income includes explicit income categories or whitelisted income flows, excluding transfers/adjustments.
+    # Expenses remain negative cash flows that are not transfers or internal movements.
+    df["is_income"] = (df["amount"] > 0) & ~transfer_mask & (income_category_mask | income_type_mask)
+    df["is_expense"] = (df["amount"] < 0) & ~transfer_mask
 
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
