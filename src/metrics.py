@@ -83,21 +83,23 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
     }
 
 
-def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date]) -> PeriodTotals:
+def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] | None = None) -> PeriodTotals:
     """
     Compute income and expense totals for the selected date range.
     """
     if transactions is None or transactions.empty:
         return PeriodTotals()
 
-    filtered = filter_dataframe_by_date(transactions, date_range, date_column="date")
+    filtered = (
+        filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
+    )
     income = float(filtered.loc[filtered["is_income"], "amount"].sum())
     expenses = float(filtered.loc[filtered["is_expense"], "amount"].sum())
     return PeriodTotals(income=income, expenses=expenses)
 
 
 def expense_category_pressure(
-    transactions: pd.DataFrame, date_range: Iterable[date], top_n: int = 5
+    transactions: pd.DataFrame, date_range: Iterable[date] | None = None, top_n: int = 5
 ) -> pd.DataFrame:
     """
     Return the top N expense categories by absolute spend for the selected range.
@@ -105,7 +107,9 @@ def expense_category_pressure(
     if transactions is None or transactions.empty:
         return pd.DataFrame(columns=["category", "total_amount", "transaction_count"])
 
-    filtered = filter_dataframe_by_date(transactions, date_range, date_column="date")
+    filtered = (
+        filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
+    )
     expenses = aggregate_categories(
         filtered,
         sign="expense",
