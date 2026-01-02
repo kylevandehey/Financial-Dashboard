@@ -1,6 +1,7 @@
 import pandas as pd
+import streamlit as st
 
-from src.filters import TransactionFilterConfig, apply_transaction_config
+from src.filters import TransactionFilterConfig, apply_transaction_config, get_filtered_transactions, set_transaction_filter_config
 
 
 def sample_tx():
@@ -29,3 +30,14 @@ def test_keyword_include_and_exclude_stack():
     filtered = apply_transaction_config(df, config)
     assert len(filtered) == 1
     assert filtered.iloc[0]["merchant"] == "Refund Store"
+
+
+def test_get_filtered_transactions_reads_session_state():
+    st.session_state.clear()
+    set_transaction_filter_config(TransactionFilterConfig.from_keyword_strings(excluded_types=["transfer"]))
+    df = sample_tx()
+
+    filtered = get_filtered_transactions(df)
+
+    assert len(filtered) == 2
+    assert "transfer" not in filtered["transaction_type"].str.lower().values

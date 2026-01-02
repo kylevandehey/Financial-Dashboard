@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 import pandas as pd
+import streamlit as st
+
+
+TX_FILTER_STATE_KEY = "tx_filters"
+_TX_FILTER_CONFIG_CACHE: TransactionFilterConfig | None = None
 
 
 def _normalize_keywords(raw_keywords: Iterable[str]) -> list[str]:
@@ -95,3 +100,29 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
         df = df.loc[~exclude_mask]
 
     return df.reset_index(drop=True)
+
+
+def set_transaction_filter_config(config: TransactionFilterConfig) -> None:
+    """Persist the provided filter config to session state and cache."""
+    global _TX_FILTER_CONFIG_CACHE
+    _TX_FILTER_CONFIG_CACHE = config
+    st.session_state[TX_FILTER_STATE_KEY] = config
+
+
+def get_transaction_filter_config() -> TransactionFilterConfig:
+    """Return the active transaction filter config from session state or cache."""
+    stored_config = st.session_state.get(TX_FILTER_STATE_KEY, _TX_FILTER_CONFIG_CACHE)
+    if isinstance(stored_config, TransactionFilterConfig):
+        return stored_config
+    return TransactionFilterConfig()
+
+
+def get_filtered_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
+    """Centralized transaction filtering that reads from session state."""
+    if transactions is None or transactions.empty:
+        return transactions
+
+    stored_config = get_transaction_filter_config()
+    set_transaction_filter_config(stored_config)
+
+    return apply_transaction_config(transactions, stored_config)
