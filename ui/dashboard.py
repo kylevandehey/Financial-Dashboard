@@ -1,4 +1,4 @@
-"""Dashboard tab rendering for Monarch+."""
+"""Dashboard tab rendering for Control Tower."""
 
 from __future__ import annotations
 

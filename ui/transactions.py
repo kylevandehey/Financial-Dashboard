@@ -68,5 +68,4 @@ def render_transactions_tab(transactions_df: pd.DataFrame, *, year_label: str) -
         date_column="date",
     )
     filtered_tx = apply_transaction_config(filtered_tx, config)
-    render_transactions_table(filtered_tx)
-
+    render_transactions_table(filtered_tx, key_prefix=f"transactions_{year_label}")

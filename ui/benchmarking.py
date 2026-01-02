@@ -1,4 +1,4 @@
-"""Benchmarking tab for comparing Monarch investments vs S&P 500."""
+"""Benchmarking tab for comparing Control Tower investments vs S&P 500."""
 
 from __future__ import annotations
 
@@ -34,37 +34,31 @@ def _prepare_investment_balances(accounts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"date": periods, "balance": balances})
 
 
-def render_benchmarking_tab(transactions: pd.DataFrame, accounts: pd.DataFrame, *, years: list[str]) -> None:
-    st.subheader("Benchmarking")
+def render_benchmarking_tab(transactions: pd.DataFrame, accounts: pd.DataFrame, *, year_label: str) -> None:
+    st.caption("Comparing investment balances to S&P 500 (placeholder data)")
     if accounts is None or accounts.empty:
         st.info("Upload Accounts CSV to view benchmarking.")
         return
 
-    year_labels = ["ALL", *years]
-    year_tabs = st.tabs(year_labels)
-    for tab, label in zip(year_tabs, year_labels):
-        with tab:
-            if label == "ALL":
-                start_date, end_date = compute_date_range("ytd")
-            else:
-                start_date, end_date = compute_date_range("full_year", year=label)
+    if year_label == "ALL":
+        start_date, end_date = compute_date_range("ytd")
+    else:
+        start_date, end_date = compute_date_range("full_year", year=year_label)
 
-            st.caption("Comparing Monarch investment balances to S&P 500 (placeholder data)")
-            inv_df = _prepare_investment_balances(accounts)
-            inv_df = filter_dataframe_by_date(inv_df, (start_date, end_date), date_column="date") if not inv_df.empty else inv_df
+    inv_df = _prepare_investment_balances(accounts)
+    inv_df = filter_dataframe_by_date(inv_df, (start_date, end_date), date_column="date") if not inv_df.empty else inv_df
 
-            if inv_df.empty:
-                st.info("No investment account balances available for this range.")
-                continue
+    if inv_df.empty:
+        st.info("No investment account balances available for this range.")
+        return
 
-            sp500_series = _mock_sp500_series(inv_df["date"])
-            base_balance = inv_df["balance"].iloc[0]
-            normalized_inv = inv_df["balance"] / base_balance * 100
-            normalized_sp = sp500_series / sp500_series.iloc[0] * 100
+    sp500_series = _mock_sp500_series(inv_df["date"])
+    base_balance = inv_df["balance"].iloc[0]
+    normalized_inv = inv_df["balance"] / base_balance * 100
+    normalized_sp = sp500_series / sp500_series.iloc[0] * 100
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=inv_df["date"], y=normalized_inv, mode="lines", name="Monarch Investments"))
-            fig.add_trace(go.Scatter(x=normalized_sp.index, y=normalized_sp, mode="lines", name="S&P 500 (stub)"))
-            fig.update_layout(yaxis_title="Indexed to 100", xaxis_title="Date", legend_title="Series")
-            st.plotly_chart(fig, use_container_width=True)
-
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=inv_df["date"], y=normalized_inv, mode="lines", name="Investments"))
+    fig.add_trace(go.Scatter(x=normalized_sp.index, y=normalized_sp, mode="lines", name="S&P 500 (stub)"))
+    fig.update_layout(yaxis_title="Indexed to 100", xaxis_title="Date", legend_title="Series")
+    st.plotly_chart(fig, use_container_width=True)
