@@ -13,7 +13,9 @@ from src.categories import format_accounting_currency
 from src.date_filters import compute_date_range, compute_month_range, filter_dataframe_by_date_and_month
 from src.metrics import (
     PeriodTotals,
-    build_cash_flow_chart_data,
+    build_balance_breakdowns,
+    build_category_breakdown,
+    build_monthly_cash_flow,
     expense_category_pressure,
     get_balances_snapshot,
     summarize_accounts,
@@ -85,56 +87,6 @@ def _key_fragment(label: str) -> str:
 def _month_from_label(label: str) -> Optional[int]:
     normalized = label.lower().strip()
     return MONTH_NAME_TO_NUMBER.get(normalized)
-
-
-def _classify_asset(subtype: str) -> str:
-    text = (subtype or "").lower()
-    if any(keyword in text for keyword in ["cash", "checking", "saving", "money market"]):
-        return "Cash"
-    if any(keyword in text for keyword in ["brokerage", "invest", "stock", "fund"]):
-        return "Investments"
-    if any(keyword in text for keyword in ["retire", "401", "ira", "roth"]):
-        return "Retirement"
-    return "Other"
-
-
-def _classify_liability(subtype: str) -> str:
-    text = (subtype or "").lower()
-    if "credit" in text or "card" in text:
-        return "Credit"
-    if any(keyword in text for keyword in ["mortgage", "auto", "secured"]):
-        return "Secured"
-    if "loan" in text:
-        return "Loans"
-    return "Unsecured"
-
-
-def _prepare_balance_breakdown(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if accounts_snapshot is None or accounts_snapshot.empty:
-        empty = pd.DataFrame({"label": [], "amount": []})
-        return empty, empty, empty
-
-    assets = accounts_snapshot.loc[accounts_snapshot["is_asset"]].copy()
-    liabilities = accounts_snapshot.loc[accounts_snapshot["is_liability"]].copy()
-
-    assets["bucket"] = assets["subtype"].map(_classify_asset)
-    liabilities["bucket"] = liabilities["subtype"].map(_classify_liability)
-
-    asset_breakdown = (
-        assets.groupby("bucket")["balance"].sum().abs().reset_index().rename(columns={"bucket": "label", "balance": "amount"})
-    )
-    liability_breakdown = (
-        liabilities.groupby("bucket")["balance"].sum().abs().reset_index().rename(columns={"bucket": "label", "balance": "amount"})
-    )
-
-    summary = summarize_accounts(accounts_snapshot)
-    net_pie = pd.DataFrame(
-        {
-            "label": ["Assets", "Liabilities"],
-            "amount": [summary["total_assets"], abs(summary["total_liabilities"])],
-        }
-    )
-    return asset_breakdown, liability_breakdown, net_pie
 
 
 def _render_donut(chart_df: pd.DataFrame, title: str, color_sequence: Optional[list[str]] = None) -> None:
@@ -294,68 +246,34 @@ def _render_metric_cards(account_summary: dict[str, float], totals: PeriodTotals
             col.metric(label, format_accounting_currency(value))
 
 
-def _render_cash_flow_timeseries(transactions: pd.DataFrame, *, context: str) -> None:
-    if transactions is None or transactions.empty:
-        st.info("No transactions available for charting in this range.")
-        return
-
-    working = transactions.copy()
-    working["date"] = pd.to_datetime(working["date"])
-    working["year"] = working["date"].dt.year
-    working["month"] = working["date"].dt.month
-    working["month_label"] = working["month"].apply(lambda m: date(2000, m, 1).strftime("%b"))
-
-    income = working.loc[working["is_income"], ["year", "month", "month_label", "amount"]].copy()
-    income["flow"] = "Income"
-
-    expenses = working.loc[working["is_expense"], ["year", "month", "month_label", "amount"]].copy()
-    expenses["amount"] = expenses["amount"].abs()
-    expenses["flow"] = "Expenses"
-
-    combined = pd.concat([income, expenses], ignore_index=True)
-    if combined.empty:
+def _render_cash_flow_timeseries(transactions: pd.DataFrame, *, date_range: tuple[date, date]) -> None:
+    monthly = build_monthly_cash_flow(transactions, date_range)
+    if monthly is None or monthly.empty:
         st.info("No income or expense rows available for charting.")
         return
 
-    if context == "all_years":
-        grouped = combined.groupby(["year", "flow"], as_index=False)["amount"].sum()
-        grouped["period"] = grouped["year"].astype(str)
-        x_label = "Year"
-    else:
-        grouped = combined.groupby(["month", "month_label", "flow"], as_index=False)["amount"].sum()
-        grouped = grouped.sort_values("month")
-        grouped["period"] = pd.Categorical(
-            grouped["month_label"],
-            categories=MONTH_TAB_LABELS[1:],
-            ordered=True,
-        )
-        x_label = "Month"
-
-    if grouped.empty:
-        st.info("No transactions available for the selected scope.")
-        return
-
+    monthly = monthly.sort_values("period_order")
+    period_order = monthly["period_label"].drop_duplicates().tolist()
     fig = px.bar(
-        grouped,
-        x="period",
+        monthly,
+        x="period_label",
         y="amount",
         color="flow",
         barmode="group",
-        labels={"amount": "Amount", "period": x_label, "flow": "Flow"},
+        labels={"amount": "Amount", "period_label": "Month", "flow": "Flow"},
+        category_orders={"period_label": period_order},
     )
     fig.update_layout(legend_title="Flow Type", bargap=0.2)
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_cash_flow(totals: PeriodTotals, transactions: pd.DataFrame, *, context: str) -> None:
+def _render_cash_flow(totals: PeriodTotals, transactions: pd.DataFrame, *, date_range: tuple[date, date]) -> None:
     st.markdown("### Cash Flow Summary")
     cols = st.columns([2, 1])
     with cols[0]:
-        _render_cash_flow_timeseries(transactions, context=context)
-
-    chart_df = build_cash_flow_chart_data(totals)
-    with cols[0]:
-        _render_donut(chart_df, "Income vs Expenses", color_sequence=px.colors.qualitative.Set2)
+        _render_cash_flow_timeseries(transactions, date_range=date_range)
+        category_breakdown = build_category_breakdown(transactions, top_n=5)
+        _render_donut(category_breakdown, "Income vs Expenses Breakdown", color_sequence=px.colors.qualitative.Set2)
 
     with cols[1]:
         net_value = totals.net
@@ -443,7 +361,7 @@ def render_dashboard_tab(
             _render_metric_cards(account_summary, totals)
 
             st.markdown("### Balance Sheet Composition")
-            asset_breakdown, liability_breakdown, net_breakdown = _prepare_balance_breakdown(account_snapshot)
+            asset_breakdown, liability_breakdown, net_breakdown = build_balance_breakdowns(account_snapshot)
             asset_col, liability_col, net_col = st.columns(3)
             with asset_col:
                 _render_donut(asset_breakdown, "Assets Breakdown")
@@ -452,5 +370,5 @@ def render_dashboard_tab(
             with net_col:
                 _render_donut(net_breakdown, "Net Worth Context")
 
-            _render_cash_flow(totals, scoped_transactions, context=context)
+            _render_cash_flow(totals, scoped_transactions, date_range=active_range)
             _render_top_categories(scoped_transactions)
