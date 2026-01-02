@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
+from src.date_filters import compute_date_range
 
 
 def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
@@ -54,6 +55,23 @@ def _format_currency(value: float) -> str:
     return f"({formatted})" if amount < 0 else formatted
 
 
+def _key(component: str, year_label: str) -> str:
+    safe_year = str(year_label or "all_years").lower().replace(" ", "_")
+    return f"dashboard_{component}_{safe_year}"
+
+
+def _quarter_bounds_for_all_years(transactions: pd.DataFrame, months: set[int]) -> tuple[date, date]:
+    """Return the min/max date for the specified quarter across all years."""
+    if transactions.empty or "date" not in transactions.columns:
+        return _infer_date_range(transactions)
+
+    dates = pd.to_datetime(transactions["date"], errors="coerce")
+    quarter_dates = dates.loc[dates.dt.month.isin(months)].dropna()
+    if quarter_dates.empty:
+        return _infer_date_range(transactions)
+    return quarter_dates.min().date(), quarter_dates.max().date()
+
+
 def _render_header(year_label: str) -> None:
     """Render the dashboard heading and scope context."""
     st.markdown("### Dashboard Overview")
@@ -72,21 +90,47 @@ def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> None
     with st.container(border=True):
         col1, col2, col3 = st.columns([1.2, 1.2, 1.6])
 
+        period_label = "ALL YEARS" if year_label == ALL_YEARS_LABEL else "FULL YEAR"
+        period_options = [period_label, "Q1", "Q2", "Q3", "Q4"]
         with col1:
+            st.write("Period")
+            selected_period = st.radio(
+                "Period Selection",
+                period_options,
+                index=0,
+                key=_key("period_radio", year_label),
+            )
+
+        quarter_months = {
+            "Q1": {1, 2, 3},
+            "Q2": {4, 5, 6},
+            "Q3": {7, 8, 9},
+            "Q4": {10, 11, 12},
+        }
+
+        if selected_period == "ALL YEARS":
+            start_date, end_date = _infer_date_range(transactions)
+        elif selected_period == "FULL YEAR":
+            try:
+                start_date, end_date = compute_date_range("full_year", year=int(year_label))
+            except Exception:
+                start_date, end_date = _infer_date_range(transactions)
+        else:
+            months = quarter_months.get(selected_period, set())
+            if year_label == ALL_YEARS_LABEL:
+                start_date, end_date = _quarter_bounds_for_all_years(transactions, months)
+            else:
+                try:
+                    start_date, end_date = compute_date_range(selected_period.lower(), year=int(year_label))
+                except Exception:
+                    start_date, end_date = _infer_date_range(transactions)
+
+        with col2:
             st.write("Date Range")
             st.date_input(
                 "Start / End",
                 (start_date, end_date),
-                key=f"dashboard_date_{year_label or 'all'}",
-            )
-
-        with col2:
-            st.write("Preset")
-            st.selectbox(
-                "Presets",
-                ["YTD", "MTD", "Q1", "Q2", "Q3", "Q4", "All"],
-                index=0,
-                key=f"dashboard_preset_{year_label or 'all'}",
+                key=_key("date_range", year_label),
             )
 
         with col3:
@@ -96,16 +140,6 @@ def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> None
             else:
                 st.success("Transactions loaded")
             st.caption("Scope respects the selected year tab.")
-
-
-def _render_configuration(transactions: pd.DataFrame) -> None:
-    """Show transaction configuration placeholders."""
-    st.markdown("#### Configure Transactions")
-    with st.container(border=True):
-        st.write("Configure how transactions feed the dashboard.")
-        st.checkbox("Include transfers", value=True, key="dashboard_include_transfers")
-        st.checkbox("Include refunds", value=True, key="dashboard_include_refunds")
-        st.caption("These toggles are placeholders to keep the configuration section visible during recovery.")
 
 
 def _render_key_metrics(transactions: pd.DataFrame) -> None:
@@ -182,7 +216,6 @@ def render_dashboard_tab(transactions_df: Optional[pd.DataFrame], accounts_df: O
 
     _render_header(year_context)
     _render_global_controls(scoped_transactions, year_context)
-    _render_configuration(scoped_transactions)
     _render_key_metrics(scoped_transactions)
     _render_charts(scoped_transactions)
 

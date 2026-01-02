@@ -21,6 +21,8 @@ _PRESET_ALIASES = {
     "q3": "q3",
     "q4": "q4",
     "full_year": "full_year",
+    "all_years": "full_year",
+    "all": "full_year",
 }
 
 

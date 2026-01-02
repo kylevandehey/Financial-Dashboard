@@ -26,6 +26,8 @@ class TransactionFilterConfig:
     excluded_types: set[str] = field(default_factory=set)
     include_keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
+    include_transfers: bool = True
+    include_refunds: bool = True
 
     @classmethod
     def from_keyword_strings(
@@ -34,6 +36,8 @@ class TransactionFilterConfig:
         excluded_types: Iterable[str] | None = None,
         include_keywords: str | Sequence[str] | None = None,
         exclude_keywords: str | Sequence[str] | None = None,
+        include_transfers: bool = True,
+        include_refunds: bool = True,
     ) -> "TransactionFilterConfig":
         include_list = []
         if isinstance(include_keywords, str):
@@ -51,6 +55,8 @@ class TransactionFilterConfig:
             excluded_types=set(excluded_types or set()),
             include_keywords=_normalize_keywords(include_list),
             exclude_keywords=_normalize_keywords(exclude_list),
+            include_transfers=bool(include_transfers),
+            include_refunds=bool(include_refunds),
         )
 
     def normalized_excluded_types(self) -> set[str]:
@@ -61,6 +67,14 @@ class TransactionFilterConfig:
 
     def normalized_exclude_keywords(self) -> list[str]:
         return [kw.lower() for kw in self.exclude_keywords if kw]
+
+    def excluded_types_with_toggles(self) -> set[str]:
+        base_excluded = self.normalized_excluded_types()
+        if not self.include_transfers:
+            base_excluded.add("transfer")
+        if not self.include_refunds:
+            base_excluded.add("refund")
+        return base_excluded
 
 
 def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilterConfig) -> pd.DataFrame:
@@ -77,7 +91,7 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
 
     if "transaction_type" in df.columns:
         normalized_types = df["transaction_type"].fillna("").astype(str).str.lower()
-        excluded = config.normalized_excluded_types()
+        excluded = config.excluded_types_with_toggles()
         if excluded:
             df = df.loc[~normalized_types.isin(excluded)]
 
@@ -113,6 +127,11 @@ def get_transaction_filter_config() -> TransactionFilterConfig:
     """Return the active transaction filter config from session state or cache."""
     stored_config = st.session_state.get(TX_FILTER_STATE_KEY, _TX_FILTER_CONFIG_CACHE)
     if isinstance(stored_config, TransactionFilterConfig):
+        # Backward compatibility for session state objects created before toggle flags existed.
+        if not hasattr(stored_config, "include_transfers"):
+            stored_config.include_transfers = True
+        if not hasattr(stored_config, "include_refunds"):
+            stored_config.include_refunds = True
         return stored_config
     return TransactionFilterConfig()
 
