@@ -140,6 +140,14 @@ def get_transaction_filter_config() -> TransactionFilterConfig:
     return TransactionFilterConfig()
 
 
+def reset_transaction_filter_config() -> None:
+    """Clear stored transaction filter configuration from session state."""
+    global _TX_FILTER_CONFIG_CACHE
+    _TX_FILTER_CONFIG_CACHE = None
+    if TX_FILTER_STATE_KEY in st.session_state:
+        st.session_state.pop(TX_FILTER_STATE_KEY, None)
+
+
 def get_filtered_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
     """Centralized transaction filtering that reads from session state."""
     if transactions is None or transactions.empty:
@@ -174,12 +182,12 @@ def _quarter_months(period_label: str) -> set[int]:
     }.get(period_label.upper(), set())
 
 
-def _available_date_bounds(transactions: pd.DataFrame) -> tuple[date, date]:
+def _available_date_bounds(df: pd.DataFrame) -> tuple[date, date]:
     today = date.today()
-    if transactions is None or transactions.empty or "date" not in transactions.columns:
+    if df is None or df.empty or "date" not in df.columns:
         return today, today
 
-    dates = pd.to_datetime(transactions["date"], errors="coerce").dropna()
+    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
     if dates.empty:
         return today, today
 
@@ -191,9 +199,13 @@ def compute_scope_date_range(
     *,
     year_label: str,
     period_label: str,
+    fallback_df: pd.DataFrame | None = None,
 ) -> tuple[date, date]:
     """Compute the date bounds for the selected year and period."""
-    lower, upper = _available_date_bounds(transactions)
+    working_df = transactions if transactions is not None else pd.DataFrame()
+    lower, upper = _available_date_bounds(working_df)
+    if working_df.empty and fallback_df is not None:
+        lower, upper = _available_date_bounds(fallback_df)
     normalized_year = _normalize_year_label(year_label)
     period = period_label.upper()
 
@@ -202,8 +214,8 @@ def compute_scope_date_range(
 
     if normalized_year is None and period.startswith("Q"):
         quarter_mask = _quarter_months(period)
-        if "date" in transactions.columns:
-            dates = pd.to_datetime(transactions["date"], errors="coerce")
+        if not working_df.empty and "date" in working_df.columns:
+            dates = pd.to_datetime(working_df["date"], errors="coerce")
             quarter_dates = dates.loc[dates.dt.month.isin(quarter_mask)].dropna()
             if not quarter_dates.empty:
                 return quarter_dates.min().date(), quarter_dates.max().date()

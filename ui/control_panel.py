@@ -10,8 +10,9 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.filters import compute_scope_date_range, period_options_for_scope
+from src.filters import compute_scope_date_range, period_options_for_scope, reset_transaction_filter_config
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
+from ui.transaction_filters import render_transaction_filters
 
 
 _QUARTER_MONTHS: dict[str, set[int]] = {
@@ -33,6 +34,14 @@ _SESSION_KEYS_TO_CLEAR: Sequence[str] = (
     "ingestion_status",
     "ingestion_error",
     "tx_filters",
+    "transactions_search_term",
+    "transactions_categories",
+    "transactions_accounts",
+    "dashboard_configure_excluded_types",
+    "dashboard_configure_include_keywords",
+    "dashboard_configure_exclude_keywords",
+    "dashboard_configure_include_transfers",
+    "dashboard_configure_include_refunds",
 )
 
 
@@ -79,36 +88,40 @@ def _ingest_csv_uploads(uploaded_files: Iterable) -> tuple[pd.DataFrame, pd.Data
         return existing_transactions, existing_accounts, st.session_state.get("ingestion_status"), st.session_state.get("ingestion_error")
 
     transactions_file, accounts_file, _diagnostics, identification_error = identify_csv_roles(uploaded_files)
-    if identification_error or transactions_file is None or accounts_file is None:
-        readable_error = identification_error or "Upload both Transactions and Balances CSVs to continue."
+    if transactions_file is None:
+        readable_error = identification_error or "Upload a Transactions CSV with Date and Amount columns to continue."
         st.session_state["ingestion_error"] = readable_error
         st.session_state["ingestion_status"] = None
         return existing_transactions, existing_accounts, None, readable_error
 
     transactions_df = existing_transactions
-    accounts_df = existing_accounts
+    accounts_df = pd.DataFrame()
     error_message = None
+    status_message = None
 
     try:
         transactions_df = normalize_transactions(transactions_file)
     except ValueError as exc:
         error_message = f"Transactions CSV error: {exc}"
 
-    try:
-        accounts_df = normalize_accounts(accounts_file)
-    except ValueError as exc:
-        error_message = f"Accounts CSV error: {exc}"
+    if accounts_file is not None:
+        try:
+            accounts_df = normalize_accounts(accounts_file)
+        except ValueError as exc:
+            error_message = f"Accounts CSV error: {exc}"
+    else:
+        status_message = identification_error or "Transactions loaded. Upload balances CSV to unlock assets and liabilities."
 
     if error_message:
         st.session_state["ingestion_error"] = error_message
         st.session_state["ingestion_status"] = None
         return existing_transactions, existing_accounts, None, error_message
 
-    st.session_state["transactions_df"] = transactions_df
     st.session_state["accounts_df"] = accounts_df
+    st.session_state["transactions_df"] = transactions_df
     st.session_state["upload_signature"] = signature
     st.session_state["ingestion_error"] = None
-    st.session_state["ingestion_status"] = "CSV upload processed. Dashboard refreshed."
+    st.session_state["ingestion_status"] = status_message or "CSV upload processed. Dashboard refreshed."
     return transactions_df, accounts_df, st.session_state["ingestion_status"], None
 
 
@@ -117,6 +130,9 @@ def reset_dashboard_state() -> None:
     for key in _SESSION_KEYS_TO_CLEAR:
         if key in st.session_state:
             st.session_state.pop(key, None)
+    # Clear cached transaction filters and uploader buffers explicitly
+    st.session_state["monarch_csvs"] = None
+    reset_transaction_filter_config()
 
 
 def _months_for_period(period_label: str) -> set[int]:
@@ -153,7 +169,12 @@ def render_control_panel() -> ControlPanelState:
         key="period_selection",
     )
 
-    date_bounds = compute_scope_date_range(transactions_df, year_label=ALL_YEARS_LABEL, period_label=selected_period)
+    date_bounds = compute_scope_date_range(
+        transactions_df,
+        year_label=ALL_YEARS_LABEL,
+        period_label=selected_period,
+        fallback_df=accounts_df,
+    )
     months_filter = _months_for_period(selected_period)
 
     st.sidebar.write("Date Range")
@@ -163,12 +184,17 @@ def render_control_panel() -> ControlPanelState:
     if error_message:
         st.sidebar.error(error_message)
     elif status_message:
-        st.sidebar.success(status_message)
+        if "Upload balances" in status_message or "Could not identify both required CSVs" in status_message:
+            st.sidebar.warning(status_message)
+        else:
+            st.sidebar.success(status_message)
     elif transactions_df.empty and accounts_df.empty:
         st.sidebar.warning("Upload Transactions and Balances CSVs to unlock analytics.")
     else:
         st.sidebar.info("Data ready.")
 
+    st.sidebar.markdown("---")
+    render_transaction_filters(target=st.sidebar)
     st.sidebar.markdown("---")
     st.sidebar.caption("Controls stay pinned for all tabs.")
 
