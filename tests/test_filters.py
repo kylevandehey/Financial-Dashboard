@@ -41,3 +41,23 @@ def test_get_filtered_transactions_reads_session_state():
 
     assert len(filtered) == 2
     assert "transfer" not in filtered["transaction_type"].str.lower().values
+
+
+def test_include_transfers_toggle_respected():
+    df = sample_tx()
+    config = TransactionFilterConfig.from_keyword_strings(include_transfers=False)
+
+    filtered = apply_transaction_config(df, config)
+
+    assert "transfer" not in filtered["transaction_type"].str.lower().values
+    assert len(filtered) == 2
+
+
+def test_include_refunds_toggle_respected():
+    df = sample_tx()
+    config = TransactionFilterConfig.from_keyword_strings(include_refunds=False)
+
+    filtered = apply_transaction_config(df, config)
+
+    assert "refund" not in filtered["transaction_type"].str.lower().values
+    assert len(filtered) == 2
