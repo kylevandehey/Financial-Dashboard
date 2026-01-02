@@ -17,9 +17,8 @@ st.set_page_config(layout="wide", page_title=APP_TITLE)
 st.title(APP_TITLE)
 st.caption(APP_SUBTITLE)
 
-transactions_df: Optional[pd.DataFrame] = st.session_state.get("transactions_df")
-accounts_df: Optional[pd.DataFrame] = st.session_state.get("accounts_df")
-filtered_transactions: Optional[pd.DataFrame] = None
+transactions_df: Optional[pd.DataFrame] = None
+accounts_df: Optional[pd.DataFrame] = None
 
 years = (
     sorted(transactions_df["year"].dropna().unique().tolist(), reverse=True)
@@ -34,12 +33,11 @@ tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
 with tabs_by_label["Dashboard"]:
     st.subheader(DASHBOARD_TITLE)
     render_transaction_filters()
-    filtered_transactions = get_filtered_transactions(transactions_df)
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
             render_dashboard_tab(
-                filtered_transactions,
+                transactions_df,
                 accounts_df,
                 year_label=label,
             )
@@ -49,7 +47,7 @@ with tabs_by_label["Transactions"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_transactions_tab(filtered_transactions, year_label=label)
+            render_transactions_tab(transactions_df, year_label=label)
 
 with tabs_by_label["Compare"]:
     st.subheader("Compare")
@@ -84,7 +82,7 @@ with tabs_by_label["Tools"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_benchmarking_tab(filtered_transactions, accounts_df, year_label=label)
+            render_benchmarking_tab(transactions_df, accounts_df, year_label=label)
             st.info("Additional tools and calculators will be wired in a future release.")
 
 with tabs_by_label["Assistance"]:

@@ -196,6 +196,8 @@ def _render_data_status(transactions: pd.DataFrame, accounts: pd.DataFrame) -> N
         st.success("Data ready")
     st.caption("Panel stays fixed while you scroll charts.")
 
+    return selected_period, (start_date, end_date)
+
 
 def _render_key_metrics(transactions: pd.DataFrame) -> None:
     """Render headline metrics vertically with accounting-style formatting."""
