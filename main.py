@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
+from src.config import ALL_YEARS_LABEL, APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
 from src.filters import get_filtered_transactions
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.benchmarking import render_benchmarking_tab
@@ -59,7 +59,7 @@ years = (
     if transactions_df is not None and not transactions_df.empty
     else []
 )
-year_labels = ["ALL"] + [str(y) for y in years]
+year_labels = [ALL_YEARS_LABEL] + [str(y) for y in years]
 
 primary_tabs = st.tabs(NAV_ITEMS)
 tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))

@@ -7,6 +7,7 @@ ATTRIBUTION = "by Authentic Financial"
 APP_TITLE = PRODUCT_NAME
 APP_SUBTITLE = f"{TAGLINE} {ATTRIBUTION}"
 DASHBOARD_TITLE = "Dashboard"
+ALL_YEARS_LABEL = "ALL YEARS"
 
 NAV_ITEMS = [
     "Dashboard",

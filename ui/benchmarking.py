@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.config import ALL_YEARS_LABEL
 from src.date_filters import compute_date_range, filter_dataframe_by_date
 
 
@@ -40,7 +41,7 @@ def render_benchmarking_tab(transactions: pd.DataFrame, accounts: pd.DataFrame, 
         st.info("Upload Accounts CSV to view benchmarking.")
         return
 
-    if year_label == "ALL":
+    if str(year_label).upper() in {"ALL", ALL_YEARS_LABEL}:
         start_date, end_date = compute_date_range("ytd")
     else:
         start_date, end_date = compute_date_range("full_year", year=year_label)

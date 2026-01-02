@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from src.config import ALL_YEARS_LABEL
 from src.date_filters import compute_date_range, filter_dataframe_by_date
 from ui.transactions_table import render_transactions_table
 
@@ -14,7 +15,7 @@ def render_transactions_tab(filtered_transactions: pd.DataFrame, *, year_label: 
         st.info("Upload a Transactions CSV to explore table views.")
         return
 
-    if year_label == "ALL":
+    if str(year_label).upper() in {"ALL", ALL_YEARS_LABEL}:
         min_date = pd.to_datetime(filtered_transactions["date"]).min().date()
         max_date = pd.to_datetime(filtered_transactions["date"]).max().date()
         start_date, end_date = min_date, max_date
@@ -26,4 +27,5 @@ def render_transactions_tab(filtered_transactions: pd.DataFrame, *, year_label: 
         (start_date, end_date),
         date_column="date",
     )
-    render_transactions_table(filtered_tx, key_prefix=f"transactions_{year_label}")
+    safe_year = str(year_label).lower().replace(" ", "_")
+    render_transactions_table(filtered_tx, key_prefix=f"transactions_{safe_year}")
