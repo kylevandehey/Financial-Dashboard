@@ -25,6 +25,11 @@ def _normalize_keywords(raw_keywords: Iterable[str]) -> list[str]:
     return [kw.strip() for kw in raw_keywords if kw and kw.strip()]
 
 
+def _normalize_type_value(raw_type: str) -> str:
+    normalized = str(raw_type or "").lower().replace("_", " ").replace("-", " ")
+    return " ".join(normalized.split())
+
+
 @dataclass
 class TransactionFilterConfig:
     excluded_types: set[str] = field(default_factory=set)
@@ -64,7 +69,7 @@ class TransactionFilterConfig:
         )
 
     def normalized_excluded_types(self) -> set[str]:
-        return {t.lower() for t in self.excluded_types if t}
+        return {_normalize_type_value(t) for t in self.excluded_types if t}
 
     def normalized_include_keywords(self) -> list[str]:
         return [kw.lower() for kw in self.include_keywords if kw]
@@ -75,9 +80,9 @@ class TransactionFilterConfig:
     def excluded_types_with_toggles(self) -> set[str]:
         base_excluded = self.normalized_excluded_types()
         if not self.include_transfers:
-            base_excluded.add("transfer")
+            base_excluded.add(_normalize_type_value("transfer"))
         if not self.include_refunds:
-            base_excluded.add("refund")
+            base_excluded.add(_normalize_type_value("refund"))
         return base_excluded
 
 
@@ -94,10 +99,18 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
     df = transactions.copy()
 
     if "transaction_type" in df.columns:
-        normalized_types = df["transaction_type"].fillna("").astype(str).str.lower()
+        normalized_types = df["transaction_type"].apply(_normalize_type_value)
         excluded = config.excluded_types_with_toggles()
         if excluded:
-            df = df.loc[~normalized_types.isin(excluded)]
+            excluded_mask = normalized_types.apply(
+                lambda value: any(
+                    value == ex or value.startswith(f"{ex} ") for ex in excluded
+                )
+            )
+            df = df.loc[~excluded_mask]
+
+    if df.empty:
+        return df.reset_index(drop=True)
 
     haystack = (
         df[[col for col in ["merchant", "notes", "category"] if col in df.columns]]

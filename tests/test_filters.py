@@ -92,3 +92,37 @@ def test_filter_transactions_for_scope_respects_year_and_quarter():
     )
     assert len(full_year_2024) == 2
     assert set(full_year_2024["year"].unique()) == {2024}
+
+
+def test_credit_card_payment_exclusions_are_normalized():
+    df = pd.DataFrame(
+        {
+            "merchant": ["Card Pay"],
+            "notes": [""],
+            "category": ["Payment"],
+            "transaction_type": ["Credit_Card_Payment"],
+            "amount": [-250],
+        }
+    )
+
+    config = TransactionFilterConfig.from_keyword_strings(excluded_types=["Credit Card Payment"])
+    filtered = apply_transaction_config(df, config)
+
+    assert filtered.empty
+
+
+def test_transfer_prefixes_are_excluded():
+    df = pd.DataFrame(
+        {
+            "merchant": ["Transfer Out"],
+            "notes": [""],
+            "category": ["Transfer"],
+            "transaction_type": ["Transfer Out"],
+            "amount": [-500],
+        }
+    )
+
+    config = TransactionFilterConfig.from_keyword_strings(include_transfers=False)
+    filtered = apply_transaction_config(df, config)
+
+    assert filtered.empty

@@ -162,11 +162,15 @@ def render_control_panel() -> ControlPanelState:
     default_period = st.session_state.get("period_selection") or period_options[0]
     if default_period not in period_options:
         default_period = period_options[0]
-    selected_period = st.sidebar.radio(
+    period_container = st.sidebar.container()
+    period_container.markdown("#### Period Selection")
+    selected_period = period_container.radio(
         "Period Selection",
         period_options,
         index=period_options.index(default_period),
         key="period_selection",
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
     date_bounds = compute_scope_date_range(

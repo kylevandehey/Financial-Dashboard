@@ -20,11 +20,11 @@ def render_transaction_filters(target: DeltaGenerator | None = None) -> None:
 
     host.markdown("#### Configure Transactions")
     with host.container(border=True):
-        available_types = ["transfer", "payment", "refund", "adjustment"]
+        available_types = ["transfer", "payment", "credit card payment", "refund", "adjustment"]
         excluded_types = host.multiselect(
             "Exclude transaction types",
             options=available_types,
-            default=sorted(config.excluded_types),
+            default=sorted(config.excluded_types, key=str.lower),
             key=f"{key_prefix}_excluded_types",
         )
 

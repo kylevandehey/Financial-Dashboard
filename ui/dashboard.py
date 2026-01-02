@@ -10,7 +10,7 @@ import altair as alt
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.formatting import format_currency, format_currency_series
+from src.formatting import format_currency
 from src.metrics import (
     build_category_breakdown,
     build_monthly_cash_flow,
@@ -55,30 +55,39 @@ def _render_header(year_label: str, selected_period: str, date_range: tuple[date
 
 
 def _render_data_grid(df: pd.DataFrame, *, title: str, height: int | None = None) -> None:
-    st.caption(title)
-    st.dataframe(df, use_container_width=True, height=height)
+    with st.expander(title, expanded=False):
+        st.dataframe(df, use_container_width=True, height=height)
 
 
 def render_key_metrics(transactions: pd.DataFrame, accounts: pd.DataFrame, date_range: tuple[date, date]) -> None:
     """Render headline metrics with accounting-style formatting and guards."""
     if (transactions is None or transactions.empty) and (accounts is None or accounts.empty):
-        st.info("No data available for selected filters.")
-        return
+        st.info("No data available for selected filters. Metrics shown below use zero values until data is uploaded.")
 
     st.markdown("#### Key Metrics")
-    totals = summarize_cash_flow(transactions)
-    cols = st.columns(4)
-    cols[0].metric("Transactions", f"{len(transactions.index):,}" if not transactions.empty else "0")
-    cols[1].metric("Income", format_currency(totals.income))
-    cols[2].metric("Expenses", format_currency(totals.expenses))
-    cols[3].metric("Net Cash Flow", format_currency(totals.net))
+    totals = summarize_cash_flow(transactions, date_range)
+    account_summary = summarize_accounts(accounts, end_date=date_range[1] if accounts is not None else None)
 
-    account_summary = summarize_accounts(accounts, end_date=date_range[1] if accounts is not None and not accounts.empty else None)
-    if any(account_summary.values()):
-        asset_col, liability_col, net_col = st.columns(3)
-        asset_col.metric("Assets", format_currency(account_summary["total_assets"]))
-        liability_col.metric("Liabilities", format_currency(account_summary["total_liabilities"]))
-        net_col.metric("Net Worth", format_currency(account_summary["net_worth"]))
+    start_date, end_date = date_range
+    start_label = start_date.strftime("%b %d, %Y")
+    end_label = end_date.strftime("%b %d, %Y")
+
+    transaction_count = len(transactions.index) if transactions is not None else 0
+    left, middle, right = st.columns(3)
+    with left:
+        st.markdown("**Transactions**")
+        st.metric("Transactions", f"{transaction_count:,}")
+        st.caption(f"{start_label} → {end_label}")
+    with middle:
+        st.markdown("**Cash Flow**")
+        st.metric("Income", format_currency(totals.income))
+        st.metric("Expenses", format_currency(totals.expenses))
+        st.metric("Net Cash Flow", format_currency(totals.net))
+    with right:
+        st.markdown("**Balance Sheet**")
+        st.metric("Assets", format_currency(account_summary["total_assets"]))
+        st.metric("Liabilities", format_currency(account_summary["total_liabilities"]))
+        st.metric("Net Worth", format_currency(account_summary["net_worth"]))
 
 
 def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date]) -> None:
@@ -99,8 +108,9 @@ def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date,
         .mark_bar()
         .encode(
             x=alt.X("period_label:N", sort=ordered["period_label"].tolist(), title="Period"),
+            xOffset="flow",
             y=alt.Y("amount:Q", axis=_currency_axis("Amount")),
-            color=alt.Color("flow:N", title="Flow"),
+            color=alt.Color("flow:N", title="Flow", sort=["Income", "Expenses"]),
             tooltip=[
                 alt.Tooltip("period_label:N", title="Period"),
                 alt.Tooltip("flow:N", title="Flow"),
@@ -252,11 +262,6 @@ def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date
         return
 
     summary = summarize_accounts(snapshot, end_date=date_range[1])
-    snapshot_display = snapshot.copy()
-    snapshot_display["Balance"] = format_currency_series(snapshot_display["signed_balance"])
-    snapshot_display = snapshot_display.rename(
-        columns={"account": "Account", "type": "Type", "subtype": "Subtype"}
-    )[["Account", "Type", "Subtype", "Balance"]]
 
     aggregated = pd.DataFrame(
         {
@@ -264,23 +269,26 @@ def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date
             "amount": [summary["total_assets"], summary["total_liabilities"], summary["net_worth"]],
         }
     )
+    aggregated["display_amount"] = aggregated["amount"].abs()
     aggregated["formatted_amount"] = aggregated["amount"].map(format_currency)
 
     chart = (
         alt.Chart(aggregated)
-        .mark_bar()
+        .mark_arc()
         .encode(
-            x=alt.X("label:N", title=""),
-            y=alt.Y("amount:Q", axis=_currency_axis("Amount")),
+            theta=alt.Theta("display_amount:Q", stack=True),
+            color=alt.Color("label:N", title=""),
             tooltip=[
                 alt.Tooltip("label:N", title="Metric"),
                 alt.Tooltip("formatted_amount:N", title="Amount"),
             ],
-            color=alt.Color("label:N", legend=None),
         )
     )
     st.altair_chart(chart, use_container_width=True)
-    _render_data_grid(snapshot_display, title="Account Balances")
+    balance_table = aggregated[["label", "formatted_amount"]].rename(
+        columns={"label": "Metric", "formatted_amount": "Amount"}
+    )
+    _render_data_grid(balance_table, title="Balance Snapshot Data")
 
 
 def render_dashboard_tab(
