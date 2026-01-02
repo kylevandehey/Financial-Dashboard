@@ -9,14 +9,16 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.date_filters import compute_date_range, filter_dataframe_by_date_and_month
+from src.filters import compute_scope_date_range, filter_transactions_for_scope, period_options_for_scope
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from src.metrics import (
     build_category_breakdown,
     build_monthly_cash_flow,
     build_yearly_balance_trends,
     build_yearly_income_expense,
+    summarize_cash_flow,
 )
+from ui.transaction_filters import render_transaction_filters
 
 
 _QUARTER_MONTHS: dict[str, set[int]] = {
@@ -31,7 +33,8 @@ _STICKY_PANEL_STYLE = """
 .dashboard-sticky-panel {
     position: sticky;
     top: 68px;
-    z-index: 2;
+    height: fit-content;
+    z-index: 10;
 }
 .dashboard-sticky-panel > div {
     width: 100%;
@@ -40,52 +43,18 @@ _STICKY_PANEL_STYLE = """
 """
 
 
+def _ensure_sticky_panel_style() -> None:
+    if st.session_state.get("_dashboard_sticky_style_applied"):
+        return
+    st.markdown(_STICKY_PANEL_STYLE, unsafe_allow_html=True)
+    st.session_state["_dashboard_sticky_style_applied"] = True
+
+
 def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
     """Return a copy of the incoming data or an empty frame."""
     if data is None:
         return pd.DataFrame()
     return pd.DataFrame(data).copy()
-
-
-def _infer_date_range(transactions: pd.DataFrame) -> tuple[date, date]:
-    """Infer the available date range, falling back to today when missing."""
-    today = date.today()
-    if transactions.empty or "date" not in transactions.columns:
-        return today, today
-
-    dates = pd.to_datetime(transactions["date"], errors="coerce").dropna()
-    if dates.empty:
-        return today, today
-
-    return dates.min().date(), dates.max().date()
-
-
-def _filter_by_year(df: pd.DataFrame, year_label: Optional[str]) -> pd.DataFrame:
-    """Filter transactions by the selected year label."""
-    if df.empty or year_label in (None, ALL_YEARS_LABEL):
-        return df
-
-    if "year" not in df.columns:
-        return df
-
-    try:
-        year_int = int(year_label)
-    except (TypeError, ValueError):
-        return df
-
-    return df.loc[df["year"] == year_int].copy()
-
-
-def _quarter_bounds_for_all_years(transactions: pd.DataFrame, months: set[int]) -> tuple[date, date]:
-    """Return the min/max date for the specified quarter across all years."""
-    if transactions.empty or "date" not in transactions.columns:
-        return _infer_date_range(transactions)
-
-    dates = pd.to_datetime(transactions["date"], errors="coerce")
-    quarter_dates = dates.loc[dates.dt.month.isin(months)].dropna()
-    if quarter_dates.empty:
-        return _infer_date_range(transactions)
-    return quarter_dates.min().date(), quarter_dates.max().date()
 
 
 def _format_currency(value: float) -> str:
@@ -139,47 +108,38 @@ def _handle_uploads(year_label: str) -> tuple[Optional[pd.DataFrame], Optional[p
     return transactions_df, accounts_df
 
 
-def _determine_period_scope(
-    transactions: pd.DataFrame, year_label: str
-) -> tuple[str, tuple[date, date], set[int], pd.DataFrame]:
-    """Resolve the selected period and return filtered data."""
-    period_label = "ALL YEARS" if year_label == ALL_YEARS_LABEL else "FULL YEAR"
-    period_options = [period_label, "Q1", "Q2", "Q3", "Q4"]
-
+def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> tuple[str, tuple[date, date], set[int]]:
+    """Render reusable period selection and date bounds for all tabs."""
+    period_options = period_options_for_scope(year_label)
+    default_period = period_options[0]
     selected_period = st.radio(
         "Period Selection",
         period_options,
-        index=0,
+        index=period_options.index(default_period),
         key=f"dashboard_period_{year_label}",
     )
 
-    months_filter = _QUARTER_MONTHS.get(selected_period, set())
-
-    try:
-        if selected_period == "ALL YEARS":
-            start_date, end_date = _infer_date_range(transactions)
-        elif selected_period == "FULL YEAR":
-            start_date, end_date = compute_date_range("full_year", year=int(year_label))
-        else:
-            if year_label == ALL_YEARS_LABEL:
-                start_date, end_date = _quarter_bounds_for_all_years(transactions, months_filter)
-            else:
-                start_date, end_date = compute_date_range(selected_period.lower(), year=int(year_label))
-    except Exception:
-        start_date, end_date = _infer_date_range(transactions)
-
-    filtered = filter_dataframe_by_date_and_month(
-        transactions,
-        (start_date, end_date),
-        months=months_filter or None,
-        date_column="date",
+    default_start, default_end = compute_scope_date_range(transactions, year_label=year_label, period_label=selected_period)
+    date_input = st.date_input(
+        "Date Range",
+        (default_start, default_end),
+        key=f"dashboard_dates_{year_label}",
     )
-    return selected_period, (start_date, end_date), months_filter, filtered
+    try:
+        start_date, end_date = date_input
+    except Exception:
+        start_date, end_date = default_start, default_end
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    months_filter = _QUARTER_MONTHS.get(selected_period, set()) or _QUARTER_MONTHS.get(selected_period.upper(), set())
+    return selected_period, (start_date, end_date), months_filter
 
 
 def _render_date_status(date_range: Tuple[date, date]) -> None:
     start_date, end_date = date_range
-    st.write("Date Range (read-only)")
+    st.write("Date Range")
     st.caption(f"{start_date.strftime('%b %d, %Y')} → {end_date.strftime('%b %d, %Y')}")
 
 
@@ -188,7 +148,7 @@ def _render_data_status(
     accounts: pd.DataFrame,
     selected_period: Optional[str] = None,
     date_range: Optional[Tuple[date, date]] = None,
-) -> tuple[Optional[str], tuple[date, date], None, None]:
+) -> None:
     st.write("Status")
     if transactions.empty and accounts.empty:
         st.info("Awaiting uploads.")
@@ -204,51 +164,36 @@ def _render_data_status(
         fallback_date = date.today()
         date_range = (fallback_date, fallback_date)
     start_date, end_date = date_range
-    return selected_period, (start_date, end_date), None, None
+    _render_date_status((start_date, end_date))
 
 
-def _render_key_metrics(transactions: pd.DataFrame) -> None:
-    """Render headline metrics vertically with accounting-style formatting."""
-    st.write("Key Metrics")
-    amount_series = pd.to_numeric(
-        transactions.get("amount", pd.Series(dtype=float, index=transactions.index)),
-        errors="coerce",
-    )
-    total_count = len(transactions.index)
-    total_income = amount_series[amount_series > 0].sum() if not amount_series.empty else 0.0
-    total_expense = amount_series[amount_series < 0].sum() if not amount_series.empty else 0.0
-    net = amount_series.sum() if not amount_series.empty else 0.0
-
-    st.metric("Transactions", f"{total_count:,}")
-    st.metric("Income", _format_currency(total_income))
-    st.metric("Expenses", _format_currency(total_expense))
-    st.metric("Net Cash Flow", _format_currency(net))
+def _render_transaction_configuration() -> None:
+    """Wrap transaction filter configuration to ensure it only appears in the control rail."""
+    render_transaction_filters()
 
 
-def _render_stationary_panel(
-    scoped_transactions: pd.DataFrame, accounts: pd.DataFrame, year_label: str
-) -> tuple[str, tuple[date, date], set[int], pd.DataFrame, pd.DataFrame]:
-    """Render the fixed left-side panel with upload, scope, and key metrics."""
-    st.markdown(_STICKY_PANEL_STYLE, unsafe_allow_html=True)
+def render_left_control_panel(
+    transactions_df: Optional[pd.DataFrame],
+    accounts_df: Optional[pd.DataFrame],
+    year_label: str,
+) -> tuple[str, tuple[date, date], set[int]]:
+    """Render the sticky left rail shared across all tabs."""
+    _ensure_sticky_panel_style()
     st.markdown('<div class="dashboard-sticky-panel">', unsafe_allow_html=True)
-    with st.container(border=True):
-        st.markdown("### Controls & Status")
-        transactions_df, accounts_df = _handle_uploads(year_label)
-        working_transactions = _coerce_dataframe(scoped_transactions)
-        accounts_df = _coerce_dataframe(accounts_df)
 
-        selected_period, date_range, months_filter, filtered = _determine_period_scope(working_transactions, year_label)
-        _render_date_status(date_range)
-        _render_data_status(working_transactions, accounts_df, selected_period, date_range)
-        if st.button("Reset Dashboard"):
-            for key in list(st.session_state.keys()):
-                if key not in ("authenticated",):
-                    del st.session_state[key]
-            st.success("Dashboard reset.")
-        _render_key_metrics(filtered)
+    st.markdown("### Controls & Status")
+    uploaded_transactions, uploaded_accounts = _handle_uploads(year_label)
+    active_transactions = _coerce_dataframe(uploaded_transactions or st.session_state.get("transactions_df") or transactions_df)
+    active_accounts = _coerce_dataframe(uploaded_accounts or st.session_state.get("accounts_df") or accounts_df)
+
+    selected_period, date_range, months_filter = _render_global_controls(active_transactions, year_label)
+    _render_data_status(active_transactions, active_accounts, selected_period, date_range)
+
+    st.markdown("---")
+    _render_transaction_configuration()
+
     st.markdown("</div>", unsafe_allow_html=True)
-
-    return selected_period, date_range, months_filter, filtered, _coerce_dataframe(accounts_df)
+    return selected_period, date_range, months_filter
 
 
 def _render_header(year_label: str, selected_period: str) -> None:
@@ -259,7 +204,25 @@ def _render_header(year_label: str, selected_period: str) -> None:
     )
 
 
-def _render_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date]) -> None:
+def render_key_metrics(transactions: pd.DataFrame) -> None:
+    """Render headline metrics with accounting-style formatting and guards."""
+    if transactions is None or transactions.empty:
+        st.info("No data available for selected filters.")
+        return
+
+    st.markdown("#### Key Metrics")
+    totals = summarize_cash_flow(transactions)
+    st.metric("Transactions", f"{len(transactions.index):,}")
+    st.metric("Income", _format_currency(totals.income))
+    st.metric("Expenses", _format_currency(totals.expenses))
+    st.metric("Net Cash Flow", _format_currency(totals.net))
+
+
+def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date]) -> None:
+    if transactions is None or transactions.empty:
+        st.info("No data available for selected filters.")
+        return
+
     st.markdown("#### Cash Flow")
     monthly = build_monthly_cash_flow(transactions, date_range)
     if monthly.empty:
@@ -271,7 +234,11 @@ def _render_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date])
     st.bar_chart(pivot)
 
 
-def _render_category_breakdown(transactions: pd.DataFrame) -> None:
+def render_category_breakdown(transactions: pd.DataFrame) -> None:
+    if transactions is None or transactions.empty:
+        st.info("No data available for selected filters.")
+        return
+
     st.markdown("#### Category Pressure")
     breakdown = build_category_breakdown(transactions, top_n=6)
     if breakdown.empty:
@@ -325,12 +292,16 @@ def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str) -> None:
             st.caption("Δ % vs prior year: N/A")
 
 
-def _render_yoy_analytics(
+def render_yoy_analytics(
     transactions: pd.DataFrame,
     accounts: pd.DataFrame,
     months_filter: set[int],
     selected_period: str,
 ) -> None:
+    if transactions is None or transactions.empty:
+        st.info("No data available for selected filters.")
+        return
+
     st.markdown("#### Year-over-Year Analytics")
 
     preset = "full_year" if selected_period == "ALL YEARS" else selected_period.lower()
@@ -357,34 +328,48 @@ def render_dashboard_tab(
     year_label: Optional[str] = None,
 ) -> None:
     """Render the dashboard tab with fixed controls and YoY analytics."""
-    transactions = _coerce_dataframe(transactions_df)
-    accounts = _coerce_dataframe(accounts_df)
-
     year_context = year_label or ALL_YEARS_LABEL
-    scoped_transactions = _filter_by_year(transactions, year_context)
+    base_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or transactions_df)
+    base_accounts = _coerce_dataframe(st.session_state.get("accounts_df") or accounts_df)
 
-    left_col, right_col = st.columns([1.05, 2.95], gap="large")
+    left_col, right_col = st.columns([1.1, 2.9], gap="large")
 
     with left_col:
-        selected_period, date_range, months_filter, filtered_transactions, scoped_accounts = _render_stationary_panel(
-            scoped_transactions,
-            accounts,
+        selected_period, date_range, months_filter = render_left_control_panel(
+            base_transactions,
+            base_accounts,
             year_context,
         )
+        active_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or base_transactions)
+        active_accounts = _coerce_dataframe(st.session_state.get("accounts_df") or base_accounts)
+
+    scoped_transactions = filter_transactions_for_scope(
+        active_transactions,
+        year_label=year_context,
+        period_label=selected_period,
+        date_range=date_range,
+    )
+    scoped_accounts = _coerce_dataframe(active_accounts)
 
     with right_col:
         _render_header(year_context, selected_period)
-        if filtered_transactions.empty and scoped_accounts.empty:
+        if scoped_transactions.empty and scoped_accounts.empty:
             st.info("Upload transactions and accounts CSVs to enable full dashboard features.")
             return
 
-        if year_context == ALL_YEARS_LABEL:
-            st.info("Year-over-year analytics will appear here once finalized.")
-        else:
-            _render_cash_flow(filtered_transactions, date_range)
-            _render_category_breakdown(filtered_transactions)
+        render_key_metrics(scoped_transactions)
+        render_monthly_cash_flow(scoped_transactions, date_range)
+        render_category_breakdown(scoped_transactions)
 
-    if scoped_transactions.empty and transactions.empty and accounts.empty:
+        if year_context == ALL_YEARS_LABEL:
+            render_yoy_analytics(
+                scoped_transactions,
+                scoped_accounts,
+                months_filter,
+                selected_period,
+            )
+
+    if scoped_transactions.empty and base_transactions.empty and base_accounts.empty:
         st.info("Upload transactions and accounts CSVs to enable full dashboard features.")
 
 
