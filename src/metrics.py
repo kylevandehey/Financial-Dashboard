@@ -321,7 +321,6 @@ def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[dat
         filtered.loc[filtered["is_expense"]]
         .groupby(filtered["date"].dt.to_period("M"))["amount"]
         .sum()
-        .abs()
         .reindex(months, fill_value=0)
     )
 

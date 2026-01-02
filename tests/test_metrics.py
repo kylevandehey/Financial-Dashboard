@@ -129,7 +129,7 @@ def test_monthly_cash_flow_returns_zero_months():
 
     assert income_jan == 1000
     assert expense_feb == 0
-    assert expense_mar == 300
+    assert expense_mar == -300
 
 
 def test_balance_breakdowns_classify_assets_and_liabilities():
