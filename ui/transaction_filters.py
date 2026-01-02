@@ -18,36 +18,33 @@ def render_transaction_filters() -> None:
 
     st.markdown("#### Configure Transactions")
     with st.container(border=True):
-        type_col, include_col, exclude_col = st.columns([1.2, 1.4, 1.4])
-
         available_types = ["transfer", "payment", "refund", "adjustment"]
-        excluded_types = type_col.multiselect(
+        excluded_types = st.multiselect(
             "Exclude transaction types",
             options=available_types,
             default=sorted(config.excluded_types),
             key=f"{key_prefix}_excluded_types",
         )
 
-        include_keywords = include_col.text_input(
+        include_keywords = st.text_input(
             "Only include keywords",
             value=", ".join(config.include_keywords),
             key=f"{key_prefix}_include_keywords",
             placeholder="paycheck, bonus",
         )
-        exclude_keywords = exclude_col.text_input(
+        exclude_keywords = st.text_input(
             "Exclude keywords",
             value=", ".join(config.exclude_keywords),
             key=f"{key_prefix}_exclude_keywords",
             placeholder="transfer, move",
         )
 
-        toggle_col1, toggle_col2 = st.columns(2)
-        include_transfers = toggle_col1.checkbox(
+        include_transfers = st.checkbox(
             "Include transfers",
             value=config.include_transfers,
             key=f"{key_prefix}_include_transfers",
         )
-        include_refunds = toggle_col2.checkbox(
+        include_refunds = st.checkbox(
             "Include refunds",
             value=config.include_refunds,
             key=f"{key_prefix}_include_refunds",

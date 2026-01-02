@@ -6,7 +6,6 @@ import streamlit as st
 
 from src.config import ALL_YEARS_LABEL, APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
 from src.filters import get_filtered_transactions
-from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.benchmarking import render_benchmarking_tab
 from ui.dashboard import render_dashboard_tab
 from ui.transaction_filters import render_transaction_filters
@@ -20,38 +19,6 @@ st.caption(APP_SUBTITLE)
 
 transactions_df: Optional[pd.DataFrame] = None
 accounts_df: Optional[pd.DataFrame] = None
-
-with st.container(border=True):
-    st.markdown("### Upload Monarch CSVs")
-    st.caption(
-        "Upload both your Monarch Transactions CSV and Accounts/Balances CSV to initialize the dashboard. "
-        "Both files are required for accurate balance sheet and cash flow calculations."
-    )
-
-    uploaded_files = st.file_uploader(
-        "Upload Monarch CSVs",
-        accept_multiple_files=True,
-        type=["csv"],
-        key="monarch_csvs",
-    )
-
-    if not uploaded_files:
-        st.warning("Please upload both Transactions and Balances CSVs.")
-    elif len(uploaded_files) < 2:
-        st.warning("Please upload both Transactions and Balances CSVs.")
-    else:
-        transactions_file, accounts_file, _diagnostics, error_message = identify_csv_roles(uploaded_files)
-        if error_message:
-            st.error(error_message)
-        else:
-            try:
-                transactions_df = normalize_transactions(transactions_file)
-            except ValueError as exc:
-                st.error(f"Transactions CSV error: {exc}")
-            try:
-                accounts_df = normalize_accounts(accounts_file)
-            except ValueError as exc:
-                st.error(f"Accounts CSV error: {exc}")
 
 years = (
     sorted(transactions_df["year"].dropna().unique().tolist(), reverse=True)
