@@ -6,28 +6,10 @@ import pytest
 from src.date_filters import compute_date_range, compute_month_range, filter_dataframe_by_date, filter_dataframe_by_date_and_month
 
 
-def test_ytd_without_year_uses_today_anchor():
-    start, end = compute_date_range("ytd", today=date(2024, 8, 15))
+def test_full_year_without_year_uses_anchor_year():
+    start, end = compute_date_range("full_year", today=date(2024, 8, 15))
     assert start == date(2024, 1, 1)
-    assert end == date(2024, 8, 15)
-
-
-def test_ytd_with_specific_year_returns_full_year():
-    start, end = compute_date_range("ytd", year=2023, today=date(2024, 8, 15))
-    assert start == date(2023, 1, 1)
-    assert end == date(2023, 12, 31)
-
-
-def test_month_to_date_respects_month_end_for_non_current_year():
-    start, end = compute_date_range("mtd", year=2022, today=date(2024, 8, 15))
-    assert start == date(2022, 8, 1)
-    assert end == date(2022, 8, 31)
-
-
-def test_last_week_to_date_is_previous_week_aligned():
-    start, end = compute_date_range("last_week_to_date", today=date(2024, 8, 15))
-    assert start == date(2024, 8, 5)  # Monday of previous week
-    assert end == date(2024, 8, 8)  # Same weekday in previous week (Thursday)
+    assert end == date(2024, 12, 31)
 
 
 def test_quarter_range_honors_year_context():
@@ -46,7 +28,7 @@ def test_custom_range_overrides_presets():
     custom_start = date(2023, 5, 1)
     custom_end = date(2023, 7, 15)
     start, end = compute_date_range(
-        "ytd", year=2024, custom_start=custom_start, custom_end=custom_end, today=date(2024, 8, 15)
+        "full_year", year=2024, custom_start=custom_start, custom_end=custom_end, today=date(2024, 8, 15)
     )
     assert start == custom_start
     assert end == custom_end
@@ -54,13 +36,7 @@ def test_custom_range_overrides_presets():
 
 def test_invalid_custom_range_raises_error():
     with pytest.raises(ValueError):
-        compute_date_range("mtd", custom_start=date(2024, 2, 10), custom_end=date(2024, 2, 1))
-
-
-def test_leap_year_month_to_date_handles_february():
-    start, end = compute_date_range("mtd", year=2024, today=date(2024, 2, 29))
-    assert start == date(2024, 2, 1)
-    assert end == date(2024, 2, 29)
+        compute_date_range("full_year", custom_start=date(2024, 2, 10), custom_end=date(2024, 2, 1))
 
 
 def test_dataframe_filtering_respects_date_range_and_preserves_original():

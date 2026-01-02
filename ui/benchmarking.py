@@ -41,13 +41,14 @@ def render_benchmarking_tab(transactions: pd.DataFrame, accounts: pd.DataFrame, 
         st.info("Upload Accounts CSV to view benchmarking.")
         return
 
-    if str(year_label).upper() in {"ALL", ALL_YEARS_LABEL}:
-        start_date, end_date = compute_date_range("ytd")
-    else:
-        start_date, end_date = compute_date_range("full_year", year=year_label)
-
     inv_df = _prepare_investment_balances(accounts)
-    inv_df = filter_dataframe_by_date(inv_df, (start_date, end_date), date_column="date") if not inv_df.empty else inv_df
+    if inv_df.empty:
+        st.info("No investment account balances available for this range.")
+        return
+
+    if str(year_label).upper() not in {"ALL", ALL_YEARS_LABEL}:
+        start_date, end_date = compute_date_range("full_year", year=year_label)
+        inv_df = filter_dataframe_by_date(inv_df, (start_date, end_date), date_column="date")
 
     if inv_df.empty:
         st.info("No investment account balances available for this range.")
