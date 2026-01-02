@@ -4,8 +4,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from src.config import ALL_YEARS_LABEL, APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
-from src.filters import get_filtered_transactions
+from src.config import ALL_YEARS_LABEL, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
 from ui.benchmarking import render_benchmarking_tab
 from ui.dashboard import render_dashboard_tab
 from ui.transaction_filters import render_transaction_filters
@@ -13,9 +12,6 @@ from ui.transactions import render_transactions_tab
 
 
 st.set_page_config(layout="wide", page_title=APP_TITLE)
-
-st.title(APP_TITLE)
-st.caption(APP_SUBTITLE)
 
 transactions_df: Optional[pd.DataFrame] = None
 accounts_df: Optional[pd.DataFrame] = None

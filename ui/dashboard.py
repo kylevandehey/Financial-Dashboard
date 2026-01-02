@@ -136,7 +136,6 @@ def _handle_uploads(year_label: str) -> tuple[Optional[pd.DataFrame], Optional[p
     st.session_state["transactions_df"] = transactions_df
     st.session_state["accounts_df"] = accounts_df
     st.success("CSV upload processed. Dashboard refreshed.")
-    st.experimental_rerun()
     return transactions_df, accounts_df
 
 
@@ -184,7 +183,12 @@ def _render_date_status(date_range: Tuple[date, date]) -> None:
     st.caption(f"{start_date.strftime('%b %d, %Y')} → {end_date.strftime('%b %d, %Y')}")
 
 
-def _render_data_status(transactions: pd.DataFrame, accounts: pd.DataFrame) -> None:
+def _render_data_status(
+    transactions: pd.DataFrame,
+    accounts: pd.DataFrame,
+    selected_period: Optional[str] = None,
+    date_range: Optional[Tuple[date, date]] = None,
+) -> tuple[Optional[str], tuple[date, date], None, None]:
     st.write("Status")
     if transactions.empty and accounts.empty:
         st.info("Awaiting uploads.")
@@ -196,7 +200,11 @@ def _render_data_status(transactions: pd.DataFrame, accounts: pd.DataFrame) -> N
         st.success("Data ready")
     st.caption("Panel stays fixed while you scroll charts.")
 
-    return selected_period, (start_date, end_date)
+    if date_range is None:
+        fallback_date = date.today()
+        date_range = (fallback_date, fallback_date)
+    start_date, end_date = date_range
+    return selected_period, (start_date, end_date), None, None
 
 
 def _render_key_metrics(transactions: pd.DataFrame) -> None:
@@ -231,7 +239,12 @@ def _render_stationary_panel(
 
         selected_period, date_range, months_filter, filtered = _determine_period_scope(working_transactions, year_label)
         _render_date_status(date_range)
-        _render_data_status(working_transactions, accounts_df)
+        _render_data_status(working_transactions, accounts_df, selected_period, date_range)
+        if st.button("Reset Dashboard"):
+            for key in list(st.session_state.keys()):
+                if key not in ("authenticated",):
+                    del st.session_state[key]
+            st.success("Dashboard reset.")
         _render_key_metrics(filtered)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -366,7 +379,7 @@ def render_dashboard_tab(
             return
 
         if year_context == ALL_YEARS_LABEL:
-            _render_yoy_analytics(filtered_transactions, scoped_accounts, months_filter, selected_period)
+            st.info("Year-over-year analytics will appear here once finalized.")
         else:
             _render_cash_flow(filtered_transactions, date_range)
             _render_category_breakdown(filtered_transactions)
