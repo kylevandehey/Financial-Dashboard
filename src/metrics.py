@@ -134,3 +134,167 @@ def build_cash_flow_chart_data(totals: PeriodTotals) -> pd.DataFrame:
     )
     data["formatted"] = data["amount"].map(format_accounting_currency)
     return data
+
+
+def _classify_asset_bucket(row: pd.Series) -> str:
+    text = " ".join(
+        str(row.get(field, "") or "") for field in ("type", "account_type", "subtype", "category", "account_group")
+    ).lower()
+    if any(keyword in text for keyword in ("cash", "checking", "saving", "money market")):
+        return "Cash"
+    if any(keyword in text for keyword in ("brokerage", "invest", "stock", "fund", "taxable")):
+        return "Investments (Taxable)"
+    if any(keyword in text for keyword in ("retire", "401", "ira", "roth", "pension")):
+        return "Retirement"
+    return "Other Assets"
+
+
+def _classify_liability_bucket(row: pd.Series) -> str:
+    text = " ".join(str(row.get(field, "") or "") for field in ("type", "account_type", "subtype", "category")).lower()
+    if "mortgage" in text or "home" in text:
+        return "Mortgage"
+    if "credit" in text or "card" in text:
+        return "Credit Cards"
+    if "loan" in text or "lien" in text:
+        return "Loans"
+    return "Other Liabilities"
+
+
+def build_balance_breakdowns(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Prepare asset, liability, and net worth donut chart data from an accounts snapshot.
+    """
+    if accounts_snapshot is None or accounts_snapshot.empty:
+        empty = pd.DataFrame({"label": [], "amount": []})
+        return empty, empty, empty
+
+    assets = accounts_snapshot.loc[accounts_snapshot["is_asset"]].copy()
+    liabilities = accounts_snapshot.loc[accounts_snapshot["is_liability"]].copy()
+
+    amount_column = "balance" if "balance" in accounts_snapshot.columns else "signed_balance"
+    assets["bucket"] = assets.apply(_classify_asset_bucket, axis=1)
+    liabilities["bucket"] = liabilities.apply(_classify_liability_bucket, axis=1)
+
+    asset_breakdown = (
+        assets.groupby("bucket")[amount_column].sum().abs().reset_index().rename(columns={"bucket": "label", amount_column: "amount"})
+    )
+    liability_breakdown = (
+        liabilities.groupby("bucket")[amount_column].sum().abs().reset_index().rename(columns={"bucket": "label", amount_column: "amount"})
+    )
+
+    summary = summarize_accounts(accounts_snapshot)
+    net_pie = pd.DataFrame(
+        {
+            "label": ["Assets", "Liabilities"],
+            "amount": [summary["total_assets"], abs(summary["total_liabilities"])],
+        }
+    )
+    return asset_breakdown, liability_breakdown, net_pie
+
+
+def build_category_breakdown(transactions: pd.DataFrame, *, top_n: int = 5) -> pd.DataFrame:
+    """
+    Aggregate income and expense categories for donut visualization with an 'Other' bucket.
+    """
+    if transactions is None or transactions.empty or top_n <= 0:
+        return pd.DataFrame(columns=["label", "amount"])
+
+    working = transactions.loc[transactions["is_income"] | transactions["is_expense"]].copy()
+    if working.empty:
+        return pd.DataFrame(columns=["label", "amount"])
+
+    working["category"] = working["category"].fillna("").replace("", "Uncategorized")
+    working["flow"] = working.apply(lambda row: "Income" if row.get("is_income") else "Expense", axis=1)
+    working["label"] = working["flow"] + ": " + working["category"]
+    working["amount"] = working["amount"].abs()
+
+    grouped = working.groupby("label")["amount"].sum().reset_index()
+    ordered = grouped.sort_values(by=["amount", "label"], ascending=[False, True]).reset_index(drop=True)
+
+    if len(ordered) <= top_n:
+        return ordered
+
+    top = ordered.head(top_n).copy()
+    other_total = ordered["amount"].iloc[top_n:].sum()
+    if other_total > 0:
+        top = pd.concat([top, pd.DataFrame([{"label": "Other", "amount": other_total}])], ignore_index=True)
+    return top
+
+
+def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] | None = None) -> pd.DataFrame:
+    """
+    Build monthly income/expense totals for grouped bar visualization.
+    """
+    def _base_months(start, end) -> pd.DataFrame:
+        months = pd.period_range(pd.to_datetime(start).to_period("M"), pd.to_datetime(end).to_period("M"), freq="M")
+        base = pd.DataFrame({"period": months.to_timestamp(), "period_label": months.strftime("%b %Y")})
+        base["period_order"] = range(len(base))
+        return base
+
+    if transactions is None or transactions.empty:
+        if date_range is None:
+            return pd.DataFrame(columns=["period_label", "period_order", "flow", "amount"])
+        start, end = date_range
+        base = _base_months(start, end)
+        base["Income"] = 0.0
+        base["Expenses"] = 0.0
+        return base.melt(
+            id_vars=["period_label", "period_order"],
+            value_vars=["Income", "Expenses"],
+            var_name="flow",
+            value_name="amount",
+        )
+
+    filtered = filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
+    if filtered is None or filtered.empty:
+        if date_range is None:
+            return pd.DataFrame(columns=["period_label", "period_order", "flow", "amount"])
+        start, end = date_range
+        base = _base_months(start, end)
+        base["Income"] = 0.0
+        base["Expenses"] = 0.0
+        return base.melt(
+            id_vars=["period_label", "period_order"],
+            value_vars=["Income", "Expenses"],
+            var_name="flow",
+            value_name="amount",
+        )
+
+    filtered = filtered.copy()
+    filtered["date"] = pd.to_datetime(filtered["date"])
+    period_series = filtered["date"].dt.to_period("M")
+    if date_range is not None:
+        start_period = pd.to_datetime(date_range[0]).to_period("M")
+        end_period = pd.to_datetime(date_range[1]).to_period("M")
+    else:
+        start_period = period_series.min()
+        end_period = period_series.max()
+    months = pd.period_range(start_period, end_period, freq="M")
+
+    base = pd.DataFrame({"period": months.to_timestamp(), "period_label": months.strftime("%b %Y")})
+    base["period_order"] = range(len(base))
+
+    income = (
+        filtered.loc[filtered["is_income"]]
+        .groupby(filtered["date"].dt.to_period("M"))["amount"]
+        .sum()
+        .reindex(months, fill_value=0)
+    )
+    expenses = (
+        filtered.loc[filtered["is_expense"]]
+        .groupby(filtered["date"].dt.to_period("M"))["amount"]
+        .sum()
+        .abs()
+        .reindex(months, fill_value=0)
+    )
+
+    base["Income"] = income.values
+    base["Expenses"] = expenses.values
+
+    melted = base.melt(
+        id_vars=["period_label", "period_order"],
+        value_vars=["Income", "Expenses"],
+        var_name="flow",
+        value_name="amount",
+    )
+    return melted
