@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.date_filters import compute_date_range
+from src.filters import compute_scope_date_range, filter_transactions_for_scope, period_options_for_scope
 
 
 def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
@@ -17,35 +17,6 @@ def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
     if data is None:
         return pd.DataFrame()
     return pd.DataFrame(data).copy()
-
-
-def _infer_date_range(transactions: pd.DataFrame) -> tuple[date, date]:
-    """Infer the available date range, falling back to today when missing."""
-    today = date.today()
-    if transactions.empty or "date" not in transactions.columns:
-        return today, today
-
-    dates = pd.to_datetime(transactions["date"], errors="coerce").dropna()
-    if dates.empty:
-        return today, today
-
-    return dates.min().date(), dates.max().date()
-
-
-def _filter_by_year(df: pd.DataFrame, year_label: Optional[str]) -> pd.DataFrame:
-    """Filter transactions by the selected year label."""
-    if df.empty or year_label in (None, ALL_YEARS_LABEL):
-        return df
-
-    if "year" not in df.columns:
-        return df
-
-    try:
-        year_int = int(year_label)
-    except (TypeError, ValueError):
-        return df
-
-    return df.loc[df["year"] == year_int].copy()
 
 
 def _format_currency(value: float) -> str:
@@ -60,18 +31,6 @@ def _key(component: str, year_label: str) -> str:
     return f"dashboard_{component}_{safe_year}"
 
 
-def _quarter_bounds_for_all_years(transactions: pd.DataFrame, months: set[int]) -> tuple[date, date]:
-    """Return the min/max date for the specified quarter across all years."""
-    if transactions.empty or "date" not in transactions.columns:
-        return _infer_date_range(transactions)
-
-    dates = pd.to_datetime(transactions["date"], errors="coerce")
-    quarter_dates = dates.loc[dates.dt.month.isin(months)].dropna()
-    if quarter_dates.empty:
-        return _infer_date_range(transactions)
-    return quarter_dates.min().date(), quarter_dates.max().date()
-
-
 def _render_header(year_label: str) -> None:
     """Render the dashboard heading and scope context."""
     st.markdown("### Dashboard Overview")
@@ -82,56 +41,35 @@ def _render_header(year_label: str) -> None:
         st.caption(f"Scope: {year_label}")
 
 
-def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> None:
+def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> tuple[str, tuple[date, date]]:
     """Render date and scope controls with safe defaults."""
-    start_date, end_date = _infer_date_range(transactions)
     st.markdown("#### Global Controls")
+
+    period_options = period_options_for_scope(year_label)
+    default_period = period_options[0]
 
     with st.container(border=True):
         col1, col2, col3 = st.columns([1.2, 1.2, 1.6])
 
-        period_label = "ALL YEARS" if year_label == ALL_YEARS_LABEL else "FULL YEAR"
-        period_options = [period_label, "Q1", "Q2", "Q3", "Q4"]
         with col1:
             st.write("Period")
             selected_period = st.radio(
                 "Period Selection",
                 period_options,
-                index=0,
+                index=period_options.index(default_period),
                 key=_key("period_radio", year_label),
             )
 
-        quarter_months = {
-            "Q1": {1, 2, 3},
-            "Q2": {4, 5, 6},
-            "Q3": {7, 8, 9},
-            "Q4": {10, 11, 12},
-        }
-
-        if selected_period == "ALL YEARS":
-            start_date, end_date = _infer_date_range(transactions)
-        elif selected_period == "FULL YEAR":
-            try:
-                start_date, end_date = compute_date_range("full_year", year=int(year_label))
-            except Exception:
-                start_date, end_date = _infer_date_range(transactions)
-        else:
-            months = quarter_months.get(selected_period, set())
-            if year_label == ALL_YEARS_LABEL:
-                start_date, end_date = _quarter_bounds_for_all_years(transactions, months)
-            else:
-                try:
-                    start_date, end_date = compute_date_range(selected_period.lower(), year=int(year_label))
-                except Exception:
-                    start_date, end_date = _infer_date_range(transactions)
-
+        start_date, end_date = compute_scope_date_range(transactions, year_label=year_label, period_label=selected_period)
         with col2:
             st.write("Date Range")
-            st.date_input(
+            date_selection = st.date_input(
                 "Start / End",
                 (start_date, end_date),
                 key=_key("date_range", year_label),
             )
+            if isinstance(date_selection, (tuple, list)) and len(date_selection) == 2:
+                start_date, end_date = date_selection
 
         with col3:
             st.write("Status")
@@ -140,6 +78,8 @@ def _render_global_controls(transactions: pd.DataFrame, year_label: str) -> None
             else:
                 st.success("Transactions loaded")
             st.caption("Scope respects the selected year tab.")
+
+    return selected_period, (start_date, end_date)
 
 
 def _render_key_metrics(transactions: pd.DataFrame) -> None:
@@ -212,10 +152,19 @@ def render_dashboard_tab(transactions_df: Optional[pd.DataFrame], accounts_df: O
     accounts = _coerce_dataframe(accounts_df)
 
     year_context = year_label or ALL_YEARS_LABEL
-    scoped_transactions = _filter_by_year(transactions, year_context)
-
     _render_header(year_context)
-    _render_global_controls(scoped_transactions, year_context)
+    selected_period, date_range = _render_global_controls(transactions, year_context)
+    scoped_transactions = filter_transactions_for_scope(
+        transactions,
+        year_label=year_context,
+        period_label=selected_period,
+        date_range=date_range,
+    )
+
+    if scoped_transactions.empty:
+        st.info("No data available for selected filters.")
+        return
+
     _render_key_metrics(scoped_transactions)
     _render_charts(scoped_transactions)
 

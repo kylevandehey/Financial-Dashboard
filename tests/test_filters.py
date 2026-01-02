@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from src.filters import TransactionFilterConfig, apply_transaction_config, get_filtered_transactions, set_transaction_filter_config
+from src.filters import filter_transactions_for_scope
 
 
 def sample_tx():
@@ -61,3 +62,33 @@ def test_include_refunds_toggle_respected():
 
     assert "refund" not in filtered["transaction_type"].str.lower().values
     assert len(filtered) == 2
+
+
+def test_filter_transactions_for_scope_respects_year_and_quarter():
+    st.session_state.clear()
+    transactions = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-15", "2024-04-10", "2023-02-20"]),
+            "year": [2024, 2024, 2023],
+            "amount": [100, 200, 300],
+            "transaction_type": ["payment", "payment", "payment"],
+        }
+    )
+
+    q1_all_years = filter_transactions_for_scope(
+        transactions,
+        year_label="ALL YEARS",
+        period_label="Q1",
+        date_range=None,
+    )
+    assert len(q1_all_years) == 2
+    assert set(q1_all_years["year"].unique()) == {2023, 2024}
+
+    full_year_2024 = filter_transactions_for_scope(
+        transactions,
+        year_label="2024",
+        period_label="FULL YEAR",
+        date_range=None,
+    )
+    assert len(full_year_2024) == 2
+    assert set(full_year_2024["year"].unique()) == {2024}
