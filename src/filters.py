@@ -1,4 +1,4 @@
-"""Transaction filtering utilities shared across Monarch+ tabs.
+"""Transaction filtering utilities shared across Control Tower tabs.
 
 Business rules for transaction inclusion/exclusion live here so that Streamlit
 surfaces stay thin and declarative.

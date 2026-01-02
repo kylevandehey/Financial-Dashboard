@@ -108,6 +108,8 @@ def prepare_transactions_dataframe(
 def render_transactions_table(
     transactions: pd.DataFrame,
     config: Optional[TransactionsTableConfig] = None,
+    *,
+    key_prefix: str = "transactions",
 ) -> None:
     """Render the transactions table with search and filter controls."""
 
@@ -118,18 +120,31 @@ def render_transactions_table(
     search_col, category_col, account_col, reset_col = st.columns([2, 2, 2, 1])
 
     with search_col:
-        search_term = st.text_input("Search Merchant / Notes", value="", placeholder="e.g., coffee")
+        search_term = st.text_input(
+            "Search Merchant / Notes",
+            value="",
+            placeholder="e.g., coffee",
+            key=f"{key_prefix}_search_term",
+        )
 
     categories = sorted(transactions["category"].dropna().unique())
     accounts = sorted(transactions["account"].dropna().unique())
 
     with category_col:
-        selected_categories = st.multiselect("Category", options=categories)
+        selected_categories = st.multiselect(
+            "Category",
+            options=categories,
+            key=f"{key_prefix}_categories",
+        )
 
     with account_col:
-        selected_accounts = st.multiselect("Account", options=accounts)
+        selected_accounts = st.multiselect(
+            "Account",
+            options=accounts,
+            key=f"{key_prefix}_accounts",
+        )
 
-    if reset_col.button("Reset"):
+    if reset_col.button("Reset", key=f"{key_prefix}_reset"):
         st.experimental_rerun()
 
     prepared_df = prepare_transactions_dataframe(
@@ -141,4 +156,3 @@ def render_transactions_table(
     )
 
     st.dataframe(prepared_df, use_container_width=True)
-

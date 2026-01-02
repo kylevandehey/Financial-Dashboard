@@ -1,4 +1,4 @@
-"""Formatting helpers for Monarch+ dashboards.
+"""Formatting helpers for Control Tower dashboards.
 
 This module centralizes currency formatting so all UI surfaces use the same
 accounting-style convention (negative values in parentheses, no negative sign).
@@ -42,4 +42,3 @@ def format_currency_series(amounts: pd.Series) -> pd.Series:
     formatted.loc[negatives] = formatted.loc[negatives].map(lambda x: f"({x})")
     formatted.loc[numeric_amounts.isna()] = ""
     return formatted
-

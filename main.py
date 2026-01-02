@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from src.config import APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE
+from src.config import APP_SUBTITLE, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.benchmarking import render_benchmarking_tab
 from ui.dashboard import render_dashboard_tab
@@ -58,17 +58,7 @@ years = (
 )
 year_labels = ["ALL"] + [str(y) for y in years]
 
-primary_tabs = st.tabs(
-    [
-        "🏠 Dashboard",
-        "📄 Transactions",
-        "📈 Benchmarking",
-        "📊 Insights",
-        "📈 Loan Tracker",
-        "🧮 Loan Calculator",
-        "💬 Assistant",
-    ]
-)
+primary_tabs = st.tabs(NAV_ITEMS)
 
 with primary_tabs[0]:
     st.subheader(DASHBOARD_TITLE)
@@ -82,31 +72,37 @@ with primary_tabs[0]:
             )
 
 with primary_tabs[1]:
-    st.subheader("Transactions")
+    st.subheader(NAV_ITEMS[1])
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
             render_transactions_tab(transactions_df, year_label=label)
 
 with primary_tabs[2]:
-    st.subheader("Benchmarking")
-    render_benchmarking_tab(transactions_df, accounts_df, years=year_labels[1:])
-
-with primary_tabs[3]:
-    st.subheader("Insights")
+    st.subheader(f"{NAV_ITEMS[2]} (Financial IQ layer)")
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
             st.info("Insights pipeline will arrive in a future task.")
 
+with primary_tabs[3]:
+    st.subheader(NAV_ITEMS[3])
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            st.info("Coming soon — amortization tracking and payoff planning.")
+
 with primary_tabs[4]:
-    st.subheader("Loan Tracker")
-    st.info("Coming soon — amortization tracking and payoff planning.")
+    st.subheader(NAV_ITEMS[4])
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            render_benchmarking_tab(transactions_df, accounts_df, year_label=label)
+            st.info("Additional tools and calculators will be wired in a future release.")
 
 with primary_tabs[5]:
-    st.subheader("Loan Calculator")
-    st.info("Calculator functionality will be wired in a future release.")
-
-with primary_tabs[6]:
-    st.subheader("Assistant")
-    st.info("Assistant functionality will be integrated here.")
+    st.subheader(NAV_ITEMS[5])
+    year_tabs = st.tabs(year_labels)
+    for tab, label in zip(year_tabs, year_labels):
+        with tab:
+            st.info("Assistant functionality will be integrated here.")
