@@ -1,11 +1,11 @@
 # main.py
-from typing import Optional
-
-import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL, APP_TITLE, DASHBOARD_TITLE, NAV_ITEMS
+from src.filters import compute_scope_date_range, filter_transactions_for_scope
+from src.date_filters import filter_dataframe_by_date
 from ui.benchmarking import render_benchmarking_tab
+from ui.control_panel import render_control_panel
 from ui.compare import render_compare_tab
 from ui.dashboard import render_dashboard_tab
 from ui.insights import render_insights_tab
@@ -15,17 +15,25 @@ from ui.transactions import render_transactions_tab
 
 st.set_page_config(layout="wide", page_title=APP_TITLE)
 
-transactions_df: Optional[pd.DataFrame] = None
-accounts_df: Optional[pd.DataFrame] = None
+control_state = render_control_panel()
+active_transactions = control_state.transactions
+active_accounts = control_state.accounts
 
-active_transactions = st.session_state.get("transactions_df", transactions_df)
-active_accounts = st.session_state.get("accounts_df", accounts_df)
-years = (
-    sorted(active_transactions["year"].dropna().unique().tolist(), reverse=True)
-    if active_transactions is not None and not active_transactions.empty and "year" in active_transactions.columns
-    else []
-)
+years = []
+if not active_transactions.empty and "year" in active_transactions.columns:
+    years = sorted(active_transactions["year"].dropna().unique().tolist(), reverse=True)
+
 year_labels = [ALL_YEARS_LABEL] + [str(y) for y in years]
+
+
+def _filter_accounts_for_range(accounts_df, date_range):
+    if accounts_df is None or accounts_df.empty or not date_range:
+        return accounts_df
+    try:
+        start_date, end_date = date_range
+    except Exception:
+        return accounts_df
+    return filter_dataframe_by_date(accounts_df, (start_date, end_date), date_column="date")
 
 primary_tabs = st.tabs(NAV_ITEMS)
 tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
@@ -35,10 +43,21 @@ with tabs_by_label["Dashboard"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_dashboard_tab(
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_transactions = filter_transactions_for_scope(
                 active_transactions,
-                active_accounts,
                 year_label=label,
+                period_label=control_state.selected_period,
+                date_range=date_bounds,
+            )
+            scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
+            render_dashboard_tab(
+                scoped_transactions,
+                scoped_accounts,
+                year_label=label,
+                selected_period=control_state.selected_period,
+                date_range=date_bounds,
+                months_filter=control_state.months_filter,
             )
 
 with tabs_by_label["Transactions"]:
@@ -46,35 +65,88 @@ with tabs_by_label["Transactions"]:
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_transactions_tab(active_transactions, active_accounts, year_label=label)
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_transactions = filter_transactions_for_scope(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                date_range=date_bounds,
+            )
+            render_transactions_tab(
+                scoped_transactions,
+                active_accounts,
+                year_label=label,
+                selected_period=control_state.selected_period,
+            )
 
 with tabs_by_label["Compare"]:
     st.subheader("Compare")
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_compare_tab(active_transactions, active_accounts, year_label=label)
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_transactions = filter_transactions_for_scope(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                date_range=date_bounds,
+            )
+            scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
+            render_compare_tab(
+                scoped_transactions,
+                scoped_accounts,
+                year_label=label,
+                selected_period=control_state.selected_period,
+            )
 
 with tabs_by_label["Insights"]:
     st.subheader(f"{NAV_ITEMS[3]} (Financial IQ layer)")
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_insights_tab(active_transactions, active_accounts, year_label=label)
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_transactions = filter_transactions_for_scope(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                date_range=date_bounds,
+            )
+            scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
+            render_insights_tab(
+                scoped_transactions,
+                scoped_accounts,
+                year_label=label,
+                selected_period=control_state.selected_period,
+            )
 
 with tabs_by_label["Loan Tracker"]:
     st.subheader("Loan Tracker")
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_loan_tracker_tab(active_transactions, active_accounts, year_label=label)
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_transactions = filter_transactions_for_scope(
+                active_transactions,
+                year_label=label,
+                period_label=control_state.selected_period,
+                date_range=date_bounds,
+            )
+            scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
+            render_loan_tracker_tab(
+                scoped_transactions,
+                scoped_accounts,
+                year_label=label,
+                selected_period=control_state.selected_period,
+            )
 
 with tabs_by_label["Tools"]:
     st.subheader("Tools")
     year_tabs = st.tabs(year_labels)
     for tab, label in zip(year_tabs, year_labels):
         with tab:
-            render_benchmarking_tab(active_transactions, active_accounts, year_label=label)
+            date_bounds = compute_scope_date_range(active_transactions, year_label=label, period_label=control_state.selected_period)
+            scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
+            render_benchmarking_tab(active_transactions, scoped_accounts, year_label=label)
             st.info("Additional tools and calculators will be wired in a future release.")
 
 with tabs_by_label["Assistance"]:

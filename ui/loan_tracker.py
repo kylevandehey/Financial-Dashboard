@@ -6,8 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.filters import filter_transactions_for_scope
-from ui.dashboard import render_left_control_panel
 
 
 def _coerce_dataframe(data: pd.DataFrame | None) -> pd.DataFrame:
@@ -21,34 +19,16 @@ def render_loan_tracker_tab(
     accounts_df: pd.DataFrame | None,
     *,
     year_label: str,
+    selected_period: str,
 ) -> None:
     year_context = year_label or ALL_YEARS_LABEL
-    base_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or transactions_df)
-    base_accounts = _coerce_dataframe(st.session_state.get("accounts_df") or accounts_df)
+    scoped_transactions = _coerce_dataframe(transactions_df)
+    scoped_accounts = _coerce_dataframe(accounts_df)
 
-    left_col, right_col = st.columns([1.1, 2.9], gap="large")
+    st.markdown("### Loan Tracker")
+    st.caption(f"Scope: {year_context} · Period: {selected_period}")
+    if scoped_transactions.empty and scoped_accounts.empty:
+        st.info("Upload transactions and accounts CSVs to view loan tracking once available.")
+        return
 
-    with left_col:
-        selected_period, date_range, _months_filter = render_left_control_panel(
-            base_transactions,
-            base_accounts,
-            year_context,
-        )
-        active_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or base_transactions)
-        active_accounts = _coerce_dataframe(st.session_state.get("accounts_df") or base_accounts)
-
-    scoped_transactions = filter_transactions_for_scope(
-        active_transactions,
-        year_label=year_context,
-        period_label=selected_period,
-        date_range=date_range,
-    )
-
-    with right_col:
-        st.markdown("### Loan Tracker")
-        st.caption(f"Scope: {year_context} · Period: {selected_period}")
-        if scoped_transactions.empty and active_accounts.empty:
-            st.info("Upload transactions and accounts CSVs to view loan tracking once available.")
-            return
-
-        st.info("Coming soon — amortization tracking and payoff planning.")
+    st.info("Coming soon — amortization tracking and payoff planning.")

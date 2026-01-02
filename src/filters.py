@@ -212,7 +212,7 @@ def compute_scope_date_range(
     if normalized_year is not None:
         start_of_year = date(normalized_year, 1, 1)
         end_of_year = date(normalized_year, 12, 31)
-        if period == "FULL YEAR":
+        if period in {"FULL YEAR", "ALL YEARS"}:
             return start_of_year, end_of_year
         if period.startswith("Q"):
             months = _quarter_months(period)

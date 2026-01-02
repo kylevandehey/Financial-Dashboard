@@ -6,8 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
-from src.filters import filter_transactions_for_scope
-from ui.dashboard import render_left_control_panel
 from ui.transactions_table import render_transactions_table
 
 
@@ -26,34 +24,16 @@ def render_transactions_tab(
     accounts: pd.DataFrame | None = None,
     *,
     year_label: str,
+    selected_period: str,
 ) -> None:
     year_context = year_label or ALL_YEARS_LABEL
-    base_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or transactions)
-    base_accounts = _coerce_dataframe(st.session_state.get("accounts_df") or accounts)
+    scoped_transactions = _coerce_dataframe(transactions)
 
-    left_col, right_col = st.columns([1.1, 2.9], gap="large")
+    st.markdown("### Transactions")
+    st.caption(f"Scope: {year_context} · Period: {selected_period}")
+    if scoped_transactions.empty:
+        st.info("No data available for selected filters.")
+        return
 
-    with left_col:
-        selected_period, date_range, _months_filter = render_left_control_panel(
-            base_transactions,
-            base_accounts,
-            year_context,
-        )
-        active_transactions = _coerce_dataframe(st.session_state.get("transactions_df") or base_transactions)
-
-    scoped_transactions = filter_transactions_for_scope(
-        active_transactions,
-        year_label=year_context,
-        period_label=selected_period,
-        date_range=date_range,
-    )
-
-    with right_col:
-        st.markdown("### Transactions")
-        st.caption(f"Scope: {year_context} · Period: {selected_period}")
-        if scoped_transactions.empty:
-            st.info("No data available for selected filters.")
-            return
-
-        safe_year = _scope_keys(year_context)
-        render_transactions_table(scoped_transactions, key_prefix=f"transactions_{safe_year}")
+    safe_year = _scope_keys(year_context)
+    render_transactions_table(scoped_transactions, key_prefix=f"transactions_{safe_year}")
