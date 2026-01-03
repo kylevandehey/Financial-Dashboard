@@ -14,6 +14,7 @@ from typing import Iterable, Mapping, Optional
 import pandas as pd
 
 from src.categories import aggregate_categories, format_accounting_currency
+from src.debug import log_debug_event
 from src.date_filters import compute_date_range, filter_dataframe_by_date
 
 
@@ -80,11 +81,19 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
     # Force liabilities to be negative so accounting-formatting renders parentheses.
     total_liabilities = -abs(float(raw_liabilities))
     net_worth = total_assets + total_liabilities
-    return {
+    totals = {
         "total_assets": total_assets,
         "total_liabilities": total_liabilities,
         "net_worth": net_worth,
     }
+    log_debug_event(
+        "account_snapshot_totals",
+        {
+            "end_date": str(end_date) if end_date else "ALL",
+            **totals,
+        },
+    )
+    return totals
 
 
 def build_yearly_balance_trends(accounts: pd.DataFrame, *, preset: str = "full_year") -> pd.DataFrame:
@@ -132,7 +141,17 @@ def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] |
     )
     income = float(filtered.loc[filtered["is_income"], "amount"].sum())
     expenses = float(filtered.loc[filtered["is_expense"], "amount"].sum())
-    return PeriodTotals(income=income, expenses=expenses)
+    totals = PeriodTotals(income=income, expenses=expenses)
+    log_debug_event(
+        "cash_flow_totals",
+        {
+            "date_range": tuple(str(d) for d in date_range) if date_range is not None else "ALL",
+            "income": income,
+            "expenses": expenses,
+            "net": totals.net,
+        },
+    )
+    return totals
 
 
 def expense_category_pressure(

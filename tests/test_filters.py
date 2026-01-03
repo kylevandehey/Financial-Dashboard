@@ -64,6 +64,23 @@ def test_include_refunds_toggle_respected():
     assert len(filtered) == 2
 
 
+def test_include_credit_card_payments_toggle_respected():
+    df = pd.DataFrame(
+        {
+            "merchant": ["Card Payment"],
+            "notes": [""],
+            "category": ["Payment"],
+            "transaction_type": ["credit card payment"],
+            "amount": [-250],
+        }
+    )
+    config = TransactionFilterConfig.from_keyword_strings(include_credit_card_payments=False)
+
+    filtered = apply_transaction_config(df, config)
+
+    assert filtered.empty
+
+
 def test_filter_transactions_for_scope_respects_year_and_quarter():
     st.session_state.clear()
     transactions = pd.DataFrame(

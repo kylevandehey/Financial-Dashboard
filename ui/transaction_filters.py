@@ -45,11 +45,19 @@ def render_transaction_filters(target: DeltaGenerator | None = None) -> None:
             "Include transfers",
             value=config.include_transfers,
             key=f"{key_prefix}_include_transfers",
+            help="Uncheck to exclude transfers from income, expenses, and net cash flow metrics.",
         )
         include_refunds = host.checkbox(
             "Include refunds",
             value=config.include_refunds,
             key=f"{key_prefix}_include_refunds",
+            help="Uncheck to treat refunds as non-income adjustments in all charts and tables.",
+        )
+        include_credit_card_payments = host.checkbox(
+            "Include credit card payments",
+            value=config.include_credit_card_payments,
+            key=f"{key_prefix}_include_credit_card_payments",
+            help="Uncheck to remove card payments from income/expense math so net cash flow is not distorted.",
         )
 
     set_transaction_filter_config(
@@ -59,5 +67,6 @@ def render_transaction_filters(target: DeltaGenerator | None = None) -> None:
             exclude_keywords=exclude_keywords,
             include_transfers=include_transfers,
             include_refunds=include_refunds,
+            include_credit_card_payments=include_credit_card_payments,
         )
     )
