@@ -314,3 +314,19 @@ Maintain a CHANGELOG.md or PR log
 Summarize major changes as the app evolves
 
 Optional but strongly recommended
+
+## Definition of Done (Monarch+)
+
+A pull request is considered complete when:
+
+1. The PR objective matches acceptance criteria exactly
+2. All applicable items in the Monarch+ PR Review Checklist are satisfied
+3. UI constraints are preserved:
+   - Horizontal top navigation
+   - Default YTD date view
+4. Business logic remains isolated from Streamlit UI
+5. CSV ingestion errors are user-visible
+6. No automated Codex code review is required
+
+Codex may be used for implementation and code generation, but final review is human-driven.
+
