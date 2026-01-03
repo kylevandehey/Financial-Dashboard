@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
+from src.debug import DEBUG_EVENTS_KEY, DEBUG_FLAG_KEY
 from src.filters import compute_scope_date_range, period_options_for_scope, reset_transaction_filter_config
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.transaction_filters import render_transaction_filters
@@ -42,6 +43,9 @@ _SESSION_KEYS_TO_CLEAR: Sequence[str] = (
     "dashboard_configure_exclude_keywords",
     "dashboard_configure_include_transfers",
     "dashboard_configure_include_refunds",
+    "dashboard_configure_include_credit_card_payments",
+    DEBUG_FLAG_KEY,
+    DEBUG_EVENTS_KEY,
 )
 
 
@@ -173,6 +177,7 @@ def render_control_panel() -> ControlPanelState:
         horizontal=True,
         label_visibility="collapsed",
     )
+    period_container.caption("Period filters affect charts and metrics only — raw data remains unchanged.")
 
     date_bounds = compute_scope_date_range(
         transactions_df,
@@ -200,6 +205,12 @@ def render_control_panel() -> ControlPanelState:
 
     st.sidebar.markdown("---")
     render_transaction_filters(target=st.sidebar)
+    st.sidebar.toggle(
+        "Enable debug diagnostics",
+        value=st.session_state.get(DEBUG_FLAG_KEY, False),
+        key=DEBUG_FLAG_KEY,
+        help="Records row counts and metric totals behind the scenes for troubleshooting without altering data.",
+    )
     st.sidebar.markdown("---")
     st.sidebar.caption("Controls stay pinned for all tabs.")
 

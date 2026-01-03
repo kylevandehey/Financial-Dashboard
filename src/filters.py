@@ -14,6 +14,7 @@ from typing import Iterable, Optional, Sequence
 import pandas as pd
 import streamlit as st
 
+from src.debug import log_debug_event
 from src.config import ALL_YEARS_LABEL
 from src.date_filters import filter_dataframe_by_date_and_month
 
@@ -37,6 +38,7 @@ class TransactionFilterConfig:
     exclude_keywords: list[str] = field(default_factory=list)
     include_transfers: bool = True
     include_refunds: bool = True
+    include_credit_card_payments: bool = True
 
     @classmethod
     def from_keyword_strings(
@@ -47,6 +49,7 @@ class TransactionFilterConfig:
         exclude_keywords: str | Sequence[str] | None = None,
         include_transfers: bool = True,
         include_refunds: bool = True,
+        include_credit_card_payments: bool = True,
     ) -> "TransactionFilterConfig":
         include_list = []
         if isinstance(include_keywords, str):
@@ -66,6 +69,7 @@ class TransactionFilterConfig:
             exclude_keywords=_normalize_keywords(exclude_list),
             include_transfers=bool(include_transfers),
             include_refunds=bool(include_refunds),
+            include_credit_card_payments=bool(include_credit_card_payments),
         )
 
     def normalized_excluded_types(self) -> set[str]:
@@ -83,6 +87,8 @@ class TransactionFilterConfig:
             base_excluded.add(_normalize_type_value("transfer"))
         if not self.include_refunds:
             base_excluded.add(_normalize_type_value("refund"))
+        if not self.include_credit_card_payments:
+            base_excluded.add(_normalize_type_value("credit card payment"))
         return base_excluded
 
 
@@ -97,11 +103,16 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
         return transactions
 
     df = transactions.copy()
+    starting_rows = len(df.index)
+    excluded_types = set()
 
     if "transaction_type" in df.columns:
         normalized_types = df["transaction_type"].apply(_normalize_type_value)
         excluded = config.excluded_types_with_toggles()
+        excluded_types = set(excluded)
         if excluded:
+            # Transfers and credit card payments are excluded from income/expense math when toggled
+            # off so they do not distort cash flow or net calculations.
             excluded_mask = normalized_types.apply(
                 lambda value: any(
                     value == ex or value.startswith(f"{ex} ") for ex in excluded
@@ -130,7 +141,19 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
         exclude_mask = haystack.apply(lambda text: any(term in text for term in exclude_terms))
         df = df.loc[~exclude_mask]
 
-    return df.reset_index(drop=True)
+    filtered = df.reset_index(drop=True)
+    log_debug_event(
+        "transaction_filtering",
+        {
+            "rows_before": starting_rows,
+            "rows_after": len(filtered.index),
+            "excluded_types": sorted(excluded_types),
+            "include_transfers": config.include_transfers,
+            "include_refunds": config.include_refunds,
+            "include_credit_card_payments": config.include_credit_card_payments,
+        },
+    )
+    return filtered
 
 
 def set_transaction_filter_config(config: TransactionFilterConfig) -> None:
@@ -149,6 +172,8 @@ def get_transaction_filter_config() -> TransactionFilterConfig:
             stored_config.include_transfers = True
         if not hasattr(stored_config, "include_refunds"):
             stored_config.include_refunds = True
+        if not hasattr(stored_config, "include_credit_card_payments"):
+            stored_config.include_credit_card_payments = True
         return stored_config
     return TransactionFilterConfig()
 
@@ -288,4 +313,15 @@ def filter_transactions_for_scope(
         months=months,
         date_column="date",
     )
-    return filtered.reset_index(drop=True)
+    scoped_filtered = filtered.reset_index(drop=True)
+    log_debug_event(
+        "transaction_scope",
+        {
+            "year_label": year_label,
+            "period_label": period_label,
+            "rows_after_scope": len(scoped_filtered.index),
+            "months": sorted(months),
+            "date_range": (str(start_date), str(end_date)),
+        },
+    )
+    return scoped_filtered

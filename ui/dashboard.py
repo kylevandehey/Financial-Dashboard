@@ -29,6 +29,11 @@ _QUARTER_MONTHS: dict[str, set[int]] = {
 }
 
 
+def _make_section_id(section: str, year_label: str, selected_period: str) -> str:
+    normalized = f"{section}_{year_label}_{selected_period}".lower().replace(" ", "_")
+    return f"dashboard_{normalized}"
+
+
 def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
     """Return a copy of the incoming data or an empty frame."""
     if data is None:
@@ -40,7 +45,7 @@ def _currency_axis(title: str | None = None) -> alt.Axis:
     """Altair axis with accounting-style label formatting."""
     return alt.Axis(
         title=title,
-        labelExpr="datum.value < 0 ? '($' + format(-datum.value, ',.0f') + ')' : '$' + format(datum.value, ',.0f')",
+        labelExpr="datum.value < 0 ? '($' + format(-datum.value, ',.2f') + ')' : '$' + format(datum.value, ',.2f')",
     )
 
 
@@ -52,13 +57,17 @@ def _render_header(year_label: str, selected_period: str, date_range: tuple[date
     st.caption(format_date_range(date_range))
 
 
-def _render_data_grid(df: pd.DataFrame, *, title: str, height: int | None = None) -> None:
-    with st.expander(title, expanded=False):
+def _render_data_grid(df: pd.DataFrame, *, title: str, section_id: str, height: int | None = None) -> None:
+    """Reusable, stateful collapsible data grid for tables under charts."""
+    row_count = len(df.index) if df is not None else 0
+    header = f"{title} ({row_count} rows)"
+    expanded_default = st.session_state.get(section_id, False)
+    with st.expander(header, expanded=expanded_default, key=section_id):
         st.dataframe(df, use_container_width=True, height=height)
 
 
 def render_key_metrics(transactions: pd.DataFrame, accounts: pd.DataFrame, date_range: tuple[date, date]) -> None:
-    """Render headline metrics with accounting-style formatting and guards."""
+    """Render headline metrics with consistent grouping and accounting formatting."""
     if (transactions is None or transactions.empty) and (accounts is None or accounts.empty):
         st.info("No data available for selected filters. Metrics shown below use zero values until data is uploaded.")
 
@@ -71,24 +80,31 @@ def render_key_metrics(transactions: pd.DataFrame, accounts: pd.DataFrame, date_
     end_label = end_date.strftime("%b %d, %Y")
 
     transaction_count = len(transactions.index) if transactions is not None else 0
-    left, middle, right = st.columns(3)
-    with left:
-        st.markdown("**Transactions**")
-        st.metric("Transactions", f"{transaction_count:,}")
-        st.caption(f"{start_label} → {end_label}")
-    with middle:
+    st.caption(f"{transaction_count:,} transactions in scope · {start_label} → {end_label}")
+
+    cash_flow_group, balance_sheet_group = st.columns(2)
+    with cash_flow_group:
         st.markdown("**Cash Flow**")
-        st.metric("Income", format_currency(totals.income))
-        st.metric("Expenses", format_currency(totals.expenses))
-        st.metric("Net Cash Flow", format_currency(totals.net))
-    with right:
+        income_col, expense_col, net_col = st.columns(3)
+        with income_col:
+            st.metric("Income", format_currency(totals.income))
+        with expense_col:
+            st.metric("Expenses", format_currency(totals.expenses))
+        with net_col:
+            st.metric("Net Cash Flow", format_currency(totals.net))
+
+    with balance_sheet_group:
         st.markdown("**Balance Sheet**")
-        st.metric("Assets", format_currency(account_summary["total_assets"]))
-        st.metric("Liabilities", format_currency(account_summary["total_liabilities"]))
-        st.metric("Net Worth", format_currency(account_summary["net_worth"]))
+        assets_col, liabilities_col, networth_col = st.columns(3)
+        with assets_col:
+            st.metric("Assets", format_currency(account_summary["total_assets"]))
+        with liabilities_col:
+            st.metric("Liabilities", format_currency(account_summary["total_liabilities"]))
+        with networth_col:
+            st.metric("Net Worth", format_currency(account_summary["net_worth"]))
 
 
-def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date]) -> None:
+def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date, date], *, section_id: str) -> None:
     if transactions is None or transactions.empty:
         st.info("No data available for selected filters.")
         return
@@ -101,6 +117,7 @@ def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date,
 
     ordered = monthly.sort_values("period_order").copy()
     ordered["formatted_amount"] = ordered["amount"].map(format_currency)
+    # Safe extension point: swap chart types without changing the ordered DataFrame schema.
     chart = (
         alt.Chart(ordered)
         .mark_bar()
@@ -126,10 +143,10 @@ def render_monthly_cash_flow(transactions: pd.DataFrame, date_range: tuple[date,
     display = ordered[["period_label", "flow", "amount"]].copy()
     display["Amount"] = ordered["formatted_amount"]
     display = display.rename(columns={"period_label": "Period", "flow": "Flow"})[["Period", "Flow", "Amount"]]
-    _render_data_grid(display, title="Cash Flow Data")
+    _render_data_grid(display, title="Cash Flow Data", section_id=section_id)
 
 
-def render_category_breakdown(transactions: pd.DataFrame) -> None:
+def render_category_breakdown(transactions: pd.DataFrame, *, section_id: str) -> None:
     if transactions is None or transactions.empty:
         st.info("No data available for selected filters.")
         return
@@ -142,6 +159,7 @@ def render_category_breakdown(transactions: pd.DataFrame) -> None:
 
     ordered = breakdown.sort_values("amount", ascending=True).copy()
     ordered["formatted_amount"] = ordered["amount"].map(format_currency)
+    # Safe extension point: adjust visualization without mutating the category aggregation contract.
     chart = (
         alt.Chart(ordered)
         .mark_bar()
@@ -158,7 +176,7 @@ def render_category_breakdown(transactions: pd.DataFrame) -> None:
     st.altair_chart(chart, use_container_width=True)
 
     display = ordered[["label", "formatted_amount"]].rename(columns={"label": "Category", "formatted_amount": "Amount"})
-    _render_data_grid(display, title="Category Data")
+    _render_data_grid(display, title="Category Data", section_id=section_id)
 
 
 def _latest_delta(df: pd.DataFrame, column: str) -> tuple[Optional[float], Optional[float], Optional[int]]:
@@ -174,7 +192,7 @@ def _latest_delta(df: pd.DataFrame, column: str) -> tuple[Optional[float], Optio
     return latest_value, delta_value, int(prior_row["year"])
 
 
-def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str) -> None:
+def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str, *, section_id: str) -> None:
     with st.container(border=True):
         st.markdown(f"**{title}**")
         if df.empty or column not in df.columns:
@@ -219,7 +237,7 @@ def _render_yoy_metric_block(title: str, df: pd.DataFrame, column: str) -> None:
             st.caption("Δ % vs prior year: N/A")
 
         display = chart_data[["year", "formatted_amount"]].rename(columns={"formatted_amount": "Amount"})
-        _render_data_grid(display, title=f"{title} Data", height=175)
+        _render_data_grid(display, title=f"{title} Data", height=175, section_id=section_id)
 
 
 def render_yoy_analytics(
@@ -227,6 +245,8 @@ def render_yoy_analytics(
     accounts: pd.DataFrame,
     months_filter: set[int],
     selected_period: str,
+    *,
+    key_prefix: str,
 ) -> None:
     if transactions is None or transactions.empty:
         st.info("No data available for selected filters.")
@@ -246,15 +266,15 @@ def render_yoy_analytics(
         balance_cols, [("Net Worth", "net_worth"), ("Assets", "assets"), ("Liabilities", "liabilities")]
     ):
         with col:
-            _render_yoy_metric_block(title, balance_trends, field)
+            _render_yoy_metric_block(title, balance_trends, field, section_id=f"{key_prefix}_{field}")
 
     flow_cols = st.columns(2)
     for col, (title, field) in zip(flow_cols, [("Income", "income"), ("Expenses", "expenses")]):
         with col:
-            _render_yoy_metric_block(title, flow_trends, field)
+            _render_yoy_metric_block(title, flow_trends, field, section_id=f"{key_prefix}_{field}")
 
 
-def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date]) -> None:
+def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date], *, section_id: str) -> None:
     if accounts is None or accounts.empty:
         return
 
@@ -294,7 +314,7 @@ def render_balance_snapshot(accounts: pd.DataFrame, date_range: tuple[date, date
     balance_table = aggregated[["label", "formatted_amount"]].rename(
         columns={"label": "Metric", "formatted_amount": "Amount"}
     )
-    _render_data_grid(balance_table, title="Balance Snapshot Data")
+    _render_data_grid(balance_table, title="Balance Snapshot Data", section_id=section_id)
 
 
 def render_dashboard_tab(
@@ -309,6 +329,8 @@ def render_dashboard_tab(
     """Render the dashboard tab without triggering ingestion or layout resets."""
     transactions = _coerce_dataframe(transactions_df)
     accounts = _coerce_dataframe(accounts_df)
+    # Safe extension point: introduce new stacked modules here without touching ingestion or control wiring.
+    section_id_for = lambda section: _make_section_id(section, year_label, selected_period)
 
     _render_header(year_label, selected_period, date_range)
     if transactions.empty and accounts.empty:
@@ -316,9 +338,9 @@ def render_dashboard_tab(
         return
 
     render_key_metrics(transactions, accounts, date_range)
-    render_monthly_cash_flow(transactions, date_range)
-    render_category_breakdown(transactions)
-    render_balance_snapshot(accounts, date_range)
+    render_monthly_cash_flow(transactions, date_range, section_id=section_id_for("cash_flow_data"))
+    render_category_breakdown(transactions, section_id=section_id_for("category_pressure"))
+    render_balance_snapshot(accounts, date_range, section_id=section_id_for("balance_snapshot"))
 
     if year_label == ALL_YEARS_LABEL:
         render_yoy_analytics(
@@ -326,4 +348,5 @@ def render_dashboard_tab(
             accounts,
             months_filter,
             selected_period,
+            key_prefix=section_id_for("yoy"),
         )
