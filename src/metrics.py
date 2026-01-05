@@ -3,6 +3,12 @@ Financial aggregation helpers for the Dashboard tab.
 
 All functions remain UI-agnostic so Streamlit surfaces can reuse them without
 duplicating business logic.
+
+Stabilization contract:
+- Metric builder functions must tolerate empty inputs.
+- Functions that are invoked from UI may accept `date_range` for API consistency.
+- When `date_range` is provided, filtering occurs inside the metric builder unless
+  explicitly documented otherwise.
 """
 
 from __future__ import annotations
@@ -43,10 +49,18 @@ def get_balances_snapshot(balances_df: pd.DataFrame, end_date: Optional[date]) -
     full balances CSV should be considered.
     """
     if balances_df is None or balances_df.empty:
-        return pd.DataFrame(columns=["date", "account", "balance", "signed_balance", "is_asset", "is_liability", "subtype"])
+        return pd.DataFrame(
+            columns=["date", "account", "balance", "signed_balance", "is_asset", "is_liability", "subtype"]
+        )
 
     working = balances_df.copy()
-    working["date"] = pd.to_datetime(working["date"]).dt.normalize()
+    working["date"] = pd.to_datetime(working["date"], errors="coerce").dt.normalize()
+    working = working.dropna(subset=["date"])
+    if working.empty:
+        return pd.DataFrame(
+            columns=["date", "account", "balance", "signed_balance", "is_asset", "is_liability", "subtype"]
+        )
+
     cutoff = pd.to_datetime(end_date).normalize() if end_date is not None else working["date"].max()
     working = working.loc[working["date"] <= cutoff]
     if working.empty:
@@ -62,10 +76,15 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
     """
     Return total assets, liabilities, and net worth from normalized accounts data.
 
-    The accounts DataFrame is expected to contain:
+    Expected columns:
         - signed_balance: float (positive for assets, negative for liabilities)
         - is_asset: bool
         - is_liability: bool
+
+    Returns keys:
+        - total_assets
+        - total_liabilities (negative)
+        - net_worth
     """
     if accounts is None or accounts.empty:
         return {"total_assets": 0.0, "total_liabilities": 0.0, "net_worth": 0.0}
@@ -73,19 +92,21 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
     working_accounts = accounts
     if end_date is not None and "date" in accounts.columns:
         working_accounts = get_balances_snapshot(accounts, end_date)
+
     if working_accounts is None or working_accounts.empty:
         return {"total_assets": 0.0, "total_liabilities": 0.0, "net_worth": 0.0}
 
     total_assets = float(working_accounts.loc[working_accounts["is_asset"], "signed_balance"].sum())
     raw_liabilities = working_accounts.loc[working_accounts["is_liability"], "signed_balance"].sum()
-    # Force liabilities to be negative so accounting-formatting renders parentheses.
     total_liabilities = -abs(float(raw_liabilities))
     net_worth = total_assets + total_liabilities
+
     totals = {
         "total_assets": total_assets,
         "total_liabilities": total_liabilities,
         "net_worth": net_worth,
     }
+
     log_debug_event(
         "account_snapshot_totals",
         {
@@ -96,9 +117,18 @@ def summarize_accounts(accounts: pd.DataFrame, *, end_date: Optional[date] = Non
     return totals
 
 
-def build_yearly_balance_trends(accounts: pd.DataFrame, *, preset: str = "full_year") -> pd.DataFrame:
+def build_yearly_balance_trends(
+    accounts: pd.DataFrame,
+    date_range: Iterable[date] | None = None,
+    *,
+    preset: str = "full_year",
+) -> pd.DataFrame:
     """
     Return yearly net worth, assets, and liabilities snapshots for YoY comparisons.
+
+    Note:
+    - `date_range` is accepted for UI/API consistency but not used for computation here.
+      YoY trends are computed using `preset` per year via compute_date_range().
     """
     if accounts is None or accounts.empty or "date" not in accounts.columns:
         return pd.DataFrame(columns=["year", "net_worth", "assets", "liabilities"])
@@ -111,11 +141,13 @@ def build_yearly_balance_trends(accounts: pd.DataFrame, *, preset: str = "full_y
 
     years = sorted(working["date"].dt.year.unique())
     rows: list[dict[str, float | int]] = []
+
     for year in years:
         try:
             _, end_date = compute_date_range(preset, year=int(year))
         except ValueError:
             continue
+
         summary = summarize_accounts(working, end_date=end_date)
         rows.append(
             {
@@ -139,9 +171,14 @@ def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] |
     filtered = (
         filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
     )
+
+    if filtered is None or filtered.empty:
+        return PeriodTotals()
+
     income = float(filtered.loc[filtered["is_income"], "amount"].sum())
     expenses = float(filtered.loc[filtered["is_expense"], "amount"].sum())
     totals = PeriodTotals(income=income, expenses=expenses)
+
     log_debug_event(
         "cash_flow_totals",
         {
@@ -155,7 +192,9 @@ def summarize_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] |
 
 
 def expense_category_pressure(
-    transactions: pd.DataFrame, date_range: Iterable[date] | None = None, top_n: int = 5
+    transactions: pd.DataFrame,
+    date_range: Iterable[date] | None = None,
+    top_n: int = 5,
 ) -> pd.DataFrame:
     """
     Return the top N expense categories by absolute spend for the selected range.
@@ -166,6 +205,9 @@ def expense_category_pressure(
     filtered = (
         filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
     )
+    if filtered is None or filtered.empty:
+        return pd.DataFrame(columns=["category", "total_amount", "transaction_count"])
+
     expenses = aggregate_categories(
         filtered,
         sign="expense",
@@ -232,10 +274,18 @@ def build_balance_breakdowns(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFr
     liabilities["bucket"] = liabilities.apply(_classify_liability_bucket, axis=1)
 
     asset_breakdown = (
-        assets.groupby("bucket")[amount_column].sum().abs().reset_index().rename(columns={"bucket": "label", amount_column: "amount"})
+        assets.groupby("bucket")[amount_column]
+        .sum()
+        .abs()
+        .reset_index()
+        .rename(columns={"bucket": "label", amount_column: "amount"})
     )
     liability_breakdown = (
-        liabilities.groupby("bucket")[amount_column].sum().abs().reset_index().rename(columns={"bucket": "label", amount_column: "amount"})
+        liabilities.groupby("bucket")[amount_column]
+        .sum()
+        .abs()
+        .reset_index()
+        .rename(columns={"bucket": "label", amount_column: "amount"})
     )
 
     summary = summarize_accounts(accounts_snapshot)
@@ -250,74 +300,47 @@ def build_balance_breakdowns(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFr
 
 def build_category_breakdown(
     transactions: pd.DataFrame,
-    date_range=None,
+    date_range: Iterable[date] | None = None,
     *,
-    top_n: int = 5
+    top_n: int = 5,
 ) -> pd.DataFrame:
     """
-    Aggregate income and expense categories for donut visualization
-    with an 'Other' bucket.
-    """
+    Aggregate income and expense categories for donut visualization with an 'Other' bucket.
 
+    Returns columns:
+      - label
+      - amount
+    """
     if transactions is None or transactions.empty or top_n <= 0:
         return pd.DataFrame(columns=["label", "amount"])
 
-    # NOTE:
-    # date_range is intentionally accepted for API consistency
-    # Filtering is assumed to have already been applied upstream.
-    # This prevents signature mismatches while keeping logic centralized.
+    working = (
+        filter_dataframe_by_date(transactions, date_range, date_column="date") if date_range is not None else transactions
+    )
+    if working is None or working.empty:
+        return pd.DataFrame(columns=["label", "amount"])
 
-    working = transactions.loc[
-        transactions["is_income"] | transactions["is_expense"]
-    ].copy()
-
+    working = working.loc[working["is_income"] | working["is_expense"]].copy()
     if working.empty:
         return pd.DataFrame(columns=["label", "amount"])
 
-    working["category"] = (
-        working["category"]
-        .fillna("")
-        .replace("", "Uncategorized")
-    )
-
-    working["flow"] = working.apply(
-        lambda row: "Income" if row.get("is_income") else "Expense",
-        axis=1,
-    )
-
+    working["category"] = working["category"].fillna("").replace("", "Uncategorized")
+    working["flow"] = working.apply(lambda row: "Income" if row.get("is_income") else "Expense", axis=1)
     working["label"] = working["flow"] + " · " + working["category"]
     working["amount"] = working["amount"].abs()
 
-    grouped = (
-        working
-        .groupby("label", as_index=False)["amount"]
-        .sum()
-    )
-
-    ordered = grouped.sort_values(
-        by=["amount", "label"],
-        ascending=[False, True],
-    ).reset_index(drop=True)
+    grouped = working.groupby("label", as_index=False)["amount"].sum()
+    ordered = grouped.sort_values(by=["amount", "label"], ascending=[False, True]).reset_index(drop=True)
 
     if len(ordered) <= top_n:
         return ordered
 
     top = ordered.head(top_n).copy()
     other_total = ordered["amount"].iloc[top_n:].sum()
-
     if other_total > 0:
-        top = pd.concat(
-            [
-                top,
-                pd.DataFrame(
-                    [{"label": "Other", "amount": other_total}]
-                ),
-            ],
-            ignore_index=True,
-        )
+        top = pd.concat([top, pd.DataFrame([{"label": "Other", "amount": other_total}])], ignore_index=True)
 
     return top
-
 
 
 def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] | None = None) -> pd.DataFrame:
@@ -368,6 +391,7 @@ def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[dat
     else:
         start_period = period_series.min()
         end_period = period_series.max()
+
     months = pd.period_range(start_period, end_period, freq="M")
 
     base = pd.DataFrame({"period": months.to_timestamp(), "period_label": months.strftime("%b %Y")})
