@@ -5,14 +5,11 @@ import altair as alt
 from datetime import date
 from typing import Optional
 
-from src.config import ALL_YEARS_LABEL
 from src.formatting import format_currency, format_date_range
 from src.metrics import (
     build_category_breakdown,
     build_monthly_cash_flow,
     build_yearly_balance_trends,
-    build_yearly_income_expense,
-    get_balances_snapshot,
     summarize_cash_flow,
     summarize_accounts,
 )
@@ -31,6 +28,7 @@ _QUARTER_MONTHS: dict[str, set[int]] = {
 # -----------------------------
 # Helpers
 # -----------------------------
+
 
 def _make_section_id(section: str, year_label: str, selected_period: str) -> str:
     normalized = f"{section}_{year_label}_{selected_period}".lower().replace(" ", "_")
@@ -65,6 +63,7 @@ def _currency_axis(title: str | None = None) -> alt.Axis:
 # UI Sections
 # -----------------------------
 
+
 def _render_header(
     year_label: str,
     selected_period: str,
@@ -93,10 +92,15 @@ def render_key_metrics(
     st.markdown("#### Key Metrics")
 
     totals = summarize_cash_flow(transactions, date_range)
+
     account_summary = summarize_accounts(
         accounts,
         end_date=date_range[1] if accounts is not None else None,
     )
+
+    assets = float(account_summary.get("total_assets", 0.0))
+    liabilities = float(account_summary.get("total_liabilities", 0.0))
+    equity = float(account_summary.get("net_worth", assets + liabilities))
 
     start_date, end_date = date_range
     start_label = start_date.strftime("%b %d, %Y")
@@ -119,16 +123,6 @@ def render_key_metrics(
 
     with balance_sheet_group:
         st.markdown("**Balances**")
-
-        if isinstance(account_summary, dict):
-            assets = account_summary.get("assets", 0)
-            liabilities = account_summary.get("liabilities", 0)
-            equity = account_summary.get("equity", assets - liabilities)
-        else:
-            assets = 0
-            liabilities = 0
-            equity = 0
-
         asset_col, liability_col, equity_col = st.columns(3)
         with asset_col:
             st.metric("Assets", format_currency(assets))
@@ -146,7 +140,8 @@ def _render_data_grid(
     height: int | None = None,
 ) -> None:
     """Reusable, stateful collapsible data grid for tables under charts."""
-    row_count = len(df.index) if df is not None else 0
+    df = _coerce_dataframe(df)
+    row_count = len(df.index)
     header = f"{title} ({row_count} rows)"
 
     if section_id is None:
@@ -155,7 +150,7 @@ def _render_data_grid(
         return
 
     expander_key = _safe_key("grid", section_id)
-    expanded_default = st.session_state.get(expander_key, False)
+    expanded_default = bool(st.session_state.get(expander_key, False))
 
     with st.expander(header, expanded=expanded_default, key=expander_key):
         st.dataframe(df, use_container_width=True, height=height)
@@ -163,6 +158,7 @@ def _render_data_grid(
 # -----------------------------
 # Entry Point
 # -----------------------------
+
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
