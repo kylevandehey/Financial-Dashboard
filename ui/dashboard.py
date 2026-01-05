@@ -1,3 +1,10 @@
+import streamlit as st
+import pandas as pd
+import altair as alt
+
+from datetime import date
+from typing import Optional
+
 from src.config import ALL_YEARS_LABEL
 from src.formatting import format_currency, format_date_range
 from src.metrics import (
@@ -10,6 +17,10 @@ from src.metrics import (
     summarize_accounts,
 )
 
+# -----------------------------
+# Constants
+# -----------------------------
+
 _QUARTER_MONTHS: dict[str, set[int]] = {
     "Q1": {1, 2, 3},
     "Q2": {4, 5, 6},
@@ -17,6 +28,9 @@ _QUARTER_MONTHS: dict[str, set[int]] = {
     "Q4": {10, 11, 12},
 }
 
+# -----------------------------
+# Helpers
+# -----------------------------
 
 def _make_section_id(section: str, year_label: str, selected_period: str) -> str:
     normalized = f"{section}_{year_label}_{selected_period}".lower().replace(" ", "_")
@@ -24,7 +38,10 @@ def _make_section_id(section: str, year_label: str, selected_period: str) -> str
 
 
 def _safe_key(prefix: str, section_id: str | None) -> str:
-    sid = (section_id or "default").strip().replace(" ", "_")
+    """
+    Generate a deterministic, collision-safe Streamlit widget key.
+    """
+    sid = (section_id or "default").strip().lower().replace(" ", "_")
     return f"{prefix}__{sid}"
 
 
@@ -65,9 +82,11 @@ def _render_data_grid(
     section_id: str | None,
     height: int | None = None,
 ) -> None:
+    """Reusable, stateful collapsible data grid for tables under charts."""
     row_count = len(df.index) if df is not None else 0
     header = f"{title} ({row_count} rows)"
 
+    # Non-collapsible fallback
     if section_id is None:
         st.markdown(f"**{header}**")
         st.dataframe(df, use_container_width=True, height=height)
