@@ -38,9 +38,7 @@ def _make_section_id(section: str, year_label: str, selected_period: str) -> str
 
 
 def _safe_key(prefix: str, section_id: str | None) -> str:
-    """
-    Generate a deterministic, collision-safe Streamlit widget key.
-    """
+    """Generate a deterministic, collision-safe Streamlit widget key."""
     sid = (section_id or "default").strip().lower().replace(" ", "_")
     return f"{prefix}__{sid}"
 
@@ -64,6 +62,10 @@ def _currency_axis(title: str | None = None) -> alt.Axis:
     )
 
 
+# -----------------------------
+# UI Sections
+# -----------------------------
+
 def _render_header(
     year_label: str,
     selected_period: str,
@@ -73,6 +75,58 @@ def _render_header(
     st.caption(f"Scope: {year_label} · Period: {selected_period}")
     st.caption("Date Range")
     st.caption(format_date_range(date_range))
+
+
+def render_key_metrics(
+    transactions: pd.DataFrame,
+    accounts: pd.DataFrame,
+    date_range: tuple[date, date],
+    **_ignored: object,
+) -> None:
+    """Render headline metrics with consistent grouping and accounting formatting."""
+
+    if (transactions is None or transactions.empty) and (accounts is None or accounts.empty):
+        st.info(
+            "No data available for selected filters. "
+            "Metrics shown below use zero values until data is uploaded."
+        )
+
+    st.markdown("#### Key Metrics")
+
+    totals = summarize_cash_flow(transactions, date_range)
+    account_summary = summarize_accounts(
+        accounts,
+        end_date=date_range[1] if accounts is not None else None,
+    )
+
+    start_date, end_date = date_range
+    start_label = start_date.strftime("%b %d, %Y")
+    end_label = end_date.strftime("%b %d, %Y")
+
+    transaction_count = len(transactions.index) if transactions is not None else 0
+    st.caption(f"{transaction_count:,} transactions in scope · {start_label} → {end_label}")
+
+    cash_flow_group, balance_sheet_group = st.columns(2)
+
+    with cash_flow_group:
+        st.markdown("**Cash Flow**")
+        income_col, expense_col, net_col = st.columns(3)
+        with income_col:
+            st.metric("Income", format_currency(totals.income))
+        with expense_col:
+            st.metric("Expenses", format_currency(totals.expenses))
+        with net_col:
+            st.metric("Net", format_currency(totals.net))
+
+    with balance_sheet_group:
+        st.markdown("**Balances**")
+        asset_col, liability_col, equity_col = st.columns(3)
+        with asset_col:
+            st.metric("Assets", format_currency(account_summary.assets))
+        with liability_col:
+            st.metric("Liabilities", format_currency(account_summary.liabilities))
+        with equity_col:
+            st.metric("Equity", format_currency(account_summary.equity))
 
 
 def _render_data_grid(
@@ -86,7 +140,6 @@ def _render_data_grid(
     row_count = len(df.index) if df is not None else 0
     header = f"{title} ({row_count} rows)"
 
-    # Non-collapsible fallback
     if section_id is None:
         st.markdown(f"**{header}**")
         st.dataframe(df, use_container_width=True, height=height)
@@ -97,6 +150,11 @@ def _render_data_grid(
 
     with st.expander(header, expanded=expanded_default, key=expander_key):
         st.dataframe(df, use_container_width=True, height=height)
+
+
+# -----------------------------
+# Entry Point
+# -----------------------------
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
@@ -155,3 +213,4 @@ def render_dashboard_tab(
         section_id=_make_section_id("yearly_trends", year_label, selected_period),
         height=420,
     )
+
