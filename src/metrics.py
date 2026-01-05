@@ -248,33 +248,76 @@ def build_balance_breakdowns(accounts_snapshot: pd.DataFrame) -> tuple[pd.DataFr
     return asset_breakdown, liability_breakdown, net_pie
 
 
-def build_category_breakdown(transactions: pd.DataFrame, *, top_n: int = 5) -> pd.DataFrame:
+def build_category_breakdown(
+    transactions: pd.DataFrame,
+    date_range=None,
+    *,
+    top_n: int = 5
+) -> pd.DataFrame:
     """
-    Aggregate income and expense categories for donut visualization with an 'Other' bucket.
+    Aggregate income and expense categories for donut visualization
+    with an 'Other' bucket.
     """
+
     if transactions is None or transactions.empty or top_n <= 0:
         return pd.DataFrame(columns=["label", "amount"])
 
-    working = transactions.loc[transactions["is_income"] | transactions["is_expense"]].copy()
+    # NOTE:
+    # date_range is intentionally accepted for API consistency
+    # Filtering is assumed to have already been applied upstream.
+    # This prevents signature mismatches while keeping logic centralized.
+
+    working = transactions.loc[
+        transactions["is_income"] | transactions["is_expense"]
+    ].copy()
+
     if working.empty:
         return pd.DataFrame(columns=["label", "amount"])
 
-    working["category"] = working["category"].fillna("").replace("", "Uncategorized")
-    working["flow"] = working.apply(lambda row: "Income" if row.get("is_income") else "Expense", axis=1)
-    working["label"] = working["flow"] + ": " + working["category"]
+    working["category"] = (
+        working["category"]
+        .fillna("")
+        .replace("", "Uncategorized")
+    )
+
+    working["flow"] = working.apply(
+        lambda row: "Income" if row.get("is_income") else "Expense",
+        axis=1,
+    )
+
+    working["label"] = working["flow"] + " · " + working["category"]
     working["amount"] = working["amount"].abs()
 
-    grouped = working.groupby("label")["amount"].sum().reset_index()
-    ordered = grouped.sort_values(by=["amount", "label"], ascending=[False, True]).reset_index(drop=True)
+    grouped = (
+        working
+        .groupby("label", as_index=False)["amount"]
+        .sum()
+    )
+
+    ordered = grouped.sort_values(
+        by=["amount", "label"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
 
     if len(ordered) <= top_n:
         return ordered
 
     top = ordered.head(top_n).copy()
     other_total = ordered["amount"].iloc[top_n:].sum()
+
     if other_total > 0:
-        top = pd.concat([top, pd.DataFrame([{"label": "Other", "amount": other_total}])], ignore_index=True)
+        top = pd.concat(
+            [
+                top,
+                pd.DataFrame(
+                    [{"label": "Other", "amount": other_total}]
+                ),
+            ],
+            ignore_index=True,
+        )
+
     return top
+
 
 
 def build_monthly_cash_flow(transactions: pd.DataFrame, date_range: Iterable[date] | None = None) -> pd.DataFrame:
