@@ -107,7 +107,7 @@ def test_category_breakdown_groups_other_bucket():
 
     breakdown = build_category_breakdown(transactions, top_n=2)
     assert "Income · Salary" in breakdown["label"].values
-    assert "Expense: Rent" in breakdown["label"].values
+    assert "Expense · Rent" in breakdown["label"].values
     assert "Other" in breakdown["label"].values
     assert breakdown.loc[breakdown["label"] == "Other", "amount"].iloc[0] == 695
 
