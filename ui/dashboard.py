@@ -97,3 +97,64 @@ def _render_data_grid(
 
     with st.expander(header, expanded=expanded_default, key=expander_key):
         st.dataframe(df, use_container_width=True, height=height)
+def render_dashboard_tab(
+    transactions: pd.DataFrame,
+    accounts: pd.DataFrame,
+    date_range: tuple[date, date],
+    *,
+    year_label: str,
+    selected_period: str,
+) -> None:
+    """
+    Entry-point renderer for the Dashboard tab.
+
+    This function is intentionally thin and delegates rendering
+    to internal helpers to preserve layout consistency.
+    """
+
+    # Header
+    _render_header(
+        year_label=year_label,
+        selected_period=selected_period,
+        date_range=date_range,
+    )
+
+    # Key metrics
+    render_key_metrics(
+        transactions=transactions,
+        accounts=accounts,
+        date_range=date_range,
+    )
+
+    st.divider()
+
+    # Category breakdown
+    category_df = build_category_breakdown(transactions, date_range)
+    _render_data_grid(
+        category_df,
+        title="Category Breakdown",
+        section_id=_make_section_id("categories", year_label, selected_period),
+        height=420,
+    )
+
+    st.divider()
+
+    # Monthly cash flow
+    monthly_cf = build_monthly_cash_flow(transactions, date_range)
+    _render_data_grid(
+        monthly_cf,
+        title="Monthly Cash Flow",
+        section_id=_make_section_id("monthly_cash_flow", year_label, selected_period),
+        height=420,
+    )
+
+    st.divider()
+
+    # Yearly trends
+    yearly_trends = build_yearly_balance_trends(accounts, date_range)
+    _render_data_grid(
+        yearly_trends,
+        title="Yearly Balance Trends",
+        section_id=_make_section_id("yearly_trends", year_label, selected_period),
+        height=420,
+    )
