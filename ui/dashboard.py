@@ -119,14 +119,19 @@ def render_key_metrics(
             st.metric("Net", format_currency(totals.net))
 
     with balance_sheet_group:
-        st.markdown("**Balances**")
-        asset_col, liability_col, equity_col = st.columns(3)
-        with asset_col:
-            st.metric("Assets", format_currency(account_summary.assets))
-        with liability_col:
-            st.metric("Liabilities", format_currency(account_summary.liabilities))
-        with equity_col:
-            st.metric("Equity", format_currency(account_summary.equity))
+    st.markdown("**Balances**")
+
+    assets = account_summary.get("assets", 0) if isinstance(account_summary, dict) else 0
+    liabilities = account_summary.get("liabilities", 0) if isinstance(account_summary, dict) else 0
+    equity = account_summary.get("equity", assets - liabilities)
+
+    asset_col, liability_col, equity_col = st.columns(3)
+    with asset_col:
+        st.metric("Assets", format_currency(assets))
+    with liability_col:
+        st.metric("Liabilities", format_currency(liabilities))
+    with equity_col:
+        st.metric("Equity", format_currency(equity))
 
 
 def _render_data_grid(
