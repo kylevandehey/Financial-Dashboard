@@ -61,7 +61,6 @@ def _currency_axis(title: str | None = None) -> alt.Axis:
         ),
     )
 
-
 # -----------------------------
 # UI Sections
 # -----------------------------
@@ -119,19 +118,24 @@ def render_key_metrics(
             st.metric("Net", format_currency(totals.net))
 
     with balance_sheet_group:
-    st.markdown("**Balances**")
+        st.markdown("**Balances**")
 
-    assets = account_summary.get("assets", 0) if isinstance(account_summary, dict) else 0
-    liabilities = account_summary.get("liabilities", 0) if isinstance(account_summary, dict) else 0
-    equity = account_summary.get("equity", assets - liabilities)
+        if isinstance(account_summary, dict):
+            assets = account_summary.get("assets", 0)
+            liabilities = account_summary.get("liabilities", 0)
+            equity = account_summary.get("equity", assets - liabilities)
+        else:
+            assets = 0
+            liabilities = 0
+            equity = 0
 
-    asset_col, liability_col, equity_col = st.columns(3)
-    with asset_col:
-        st.metric("Assets", format_currency(assets))
-    with liability_col:
-        st.metric("Liabilities", format_currency(liabilities))
-    with equity_col:
-        st.metric("Equity", format_currency(equity))
+        asset_col, liability_col, equity_col = st.columns(3)
+        with asset_col:
+            st.metric("Assets", format_currency(assets))
+        with liability_col:
+            st.metric("Liabilities", format_currency(liabilities))
+        with equity_col:
+            st.metric("Equity", format_currency(equity))
 
 
 def _render_data_grid(
@@ -156,7 +160,6 @@ def _render_data_grid(
     with st.expander(header, expanded=expanded_default, key=expander_key):
         st.dataframe(df, use_container_width=True, height=height)
 
-
 # -----------------------------
 # Entry Point
 # -----------------------------
@@ -172,9 +175,6 @@ def render_dashboard_tab(
 ) -> None:
     """
     Entry-point renderer for the Dashboard tab.
-
-    Accepts extra keyword arguments for forward compatibility
-    with main.py and control-panel state.
     """
 
     _render_header(
@@ -218,4 +218,3 @@ def render_dashboard_tab(
         section_id=_make_section_id("yearly_trends", year_label, selected_period),
         height=420,
     )
-
