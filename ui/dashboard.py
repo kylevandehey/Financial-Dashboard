@@ -97,6 +97,7 @@ def _render_data_grid(
 
     with st.expander(header, expanded=expanded_default, key=expander_key):
         st.dataframe(df, use_container_width=True, height=height)
+
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     accounts: pd.DataFrame,
@@ -104,22 +105,21 @@ def render_dashboard_tab(
     *,
     year_label: str,
     selected_period: str,
+    **_ignored: object,
 ) -> None:
     """
     Entry-point renderer for the Dashboard tab.
 
-    This function is intentionally thin and delegates rendering
-    to internal helpers to preserve layout consistency.
+    Accepts extra keyword arguments for forward compatibility
+    with main.py and control-panel state.
     """
 
-    # Header
     _render_header(
         year_label=year_label,
         selected_period=selected_period,
         date_range=date_range,
     )
 
-    # Key metrics
     render_key_metrics(
         transactions=transactions,
         accounts=accounts,
@@ -128,7 +128,6 @@ def render_dashboard_tab(
 
     st.divider()
 
-    # Category breakdown
     category_df = build_category_breakdown(transactions, date_range)
     _render_data_grid(
         category_df,
@@ -139,7 +138,6 @@ def render_dashboard_tab(
 
     st.divider()
 
-    # Monthly cash flow
     monthly_cf = build_monthly_cash_flow(transactions, date_range)
     _render_data_grid(
         monthly_cf,
@@ -150,7 +148,6 @@ def render_dashboard_tab(
 
     st.divider()
 
-    # Yearly trends
     yearly_trends = build_yearly_balance_trends(accounts, date_range)
     _render_data_grid(
         yearly_trends,
