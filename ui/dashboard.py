@@ -139,7 +139,7 @@ def _render_data_grid(
     section_id: str | None,
     height: int | None = None,
 ) -> None:
-    """Reusable, stateful collapsible data grid for tables under charts."""
+    """Reusable collapsible data grid for tables under charts."""
     df = _coerce_dataframe(df)
     row_count = len(df.index)
     header = f"{title} ({row_count} rows)"
@@ -152,8 +152,13 @@ def _render_data_grid(
     expander_key = _safe_key("grid", section_id)
     expanded_default = bool(st.session_state.get(expander_key, False))
 
-    with st.expander(header, expanded=expanded_default, key=expander_key):
+    expanded = st.expander(header, expanded=expanded_default)
+    with expanded:
         st.dataframe(df, use_container_width=True, height=height)
+
+    # Persist state manually
+    st.session_state[expander_key] = expanded
+
 
 # -----------------------------
 # Entry Point
