@@ -1,3 +1,5 @@
+# PR-018: enable CI checks for pull requests
+
 name: CI
 
 on:
