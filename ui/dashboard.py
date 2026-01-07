@@ -81,55 +81,70 @@ def render_key_metrics(
     date_range: tuple[date, date],
     **_ignored: object,
 ) -> None:
-    """Render headline metrics with consistent grouping and accounting formatting."""
+    """
+    Render headline metrics with consistent grouping and accounting formatting.
 
-    if (transactions is None or transactions.empty) and (accounts is None or accounts.empty):
+    Sections:
+      - Cash Flow: Income, Expenses, Net, Savings Rate
+      - Balance Sheet: Assets, Liabilities, Net Worth
+    """
+
+    st.markdown("#### Key Metrics")
+
+    transactions_empty = transactions is None or transactions.empty
+    accounts_empty = accounts is None or accounts.empty
+
+    if transactions_empty and accounts_empty:
         st.info(
             "No data available for selected filters. "
             "Metrics shown below use zero values until data is uploaded."
         )
 
-    st.markdown("#### Key Metrics")
+    # Cash Flow
+    totals = summarize_cash_flow(transactions, date_range) if not transactions_empty else summarize_cash_flow(pd.DataFrame(), date_range)
 
-    totals = summarize_cash_flow(transactions, date_range)
-
-    account_summary = summarize_accounts(
-        accounts,
-        end_date=date_range[1] if accounts is not None else None,
-    )
+    # Balance Sheet
+    end_date = date_range[1] if not accounts_empty else None
+    account_summary = summarize_accounts(accounts, end_date=end_date) if not accounts_empty else summarize_accounts(pd.DataFrame(), end_date=None)
 
     assets = float(account_summary.get("total_assets", 0.0))
-    liabilities = float(account_summary.get("total_liabilities", 0.0))
-    equity = float(account_summary.get("net_worth", assets + liabilities))
+    liabilities = float(account_summary.get("total_liabilities", 0.0))  # should be negative internally
+    net_worth = float(account_summary.get("net_worth", 0.0))
 
-    start_date, end_date = date_range
+    # Context line
+    start_date, end_date_display = date_range
     start_label = start_date.strftime("%b %d, %Y")
-    end_label = end_date.strftime("%b %d, %Y")
-
-    transaction_count = len(transactions.index) if transactions is not None else 0
+    end_label = end_date_display.strftime("%b %d, %Y")
+    transaction_count = int(len(transactions.index)) if not transactions_empty else 0
     st.caption(f"{transaction_count:,} transactions in scope · {start_label} → {end_label}")
 
-    cash_flow_group, balance_sheet_group = st.columns(2)
+    # Row 1 — Cash Flow (4 metrics)
+    st.markdown("**Cash Flow**")
+    c1, c2, c3, c4 = st.columns(4)
 
-    with cash_flow_group:
-        st.markdown("**Cash Flow**")
-        income_col, expense_col, net_col = st.columns(3)
-        with income_col:
-            st.metric("Income", format_currency(totals.income))
-        with expense_col:
-            st.metric("Expenses", format_currency(totals.expenses))
-        with net_col:
-            st.metric("Net", format_currency(totals.net))
+    with c1:
+        st.metric("Income", format_currency(totals.income))
+    with c2:
+        st.metric("Expenses", format_currency(abs(totals.expenses)))
+    with c3:
+        st.metric("Net", format_currency(totals.net))
+    with c4:
+        st.metric("Savings Rate", f"{totals.savings_rate * 100:.1f}%")
 
-    with balance_sheet_group:
-        st.markdown("**Balances**")
-        asset_col, liability_col, equity_col = st.columns(3)
-        with asset_col:
-            st.metric("Assets", format_currency(assets))
-        with liability_col:
-            st.metric("Liabilities", format_currency(liabilities))
-        with equity_col:
-            st.metric("Equity", format_currency(equity))
+    st.divider()
+
+    # Row 2 — Balance Sheet (3 metrics)
+    st.markdown("**Balance Sheet**")
+    b1, b2, b3 = st.columns(3)
+
+    with b1:
+        st.metric("Assets", format_currency(assets))
+    with b2:
+        # liabilities should display as parentheses if format_currency supports accounting format for negatives
+        st.metric("Liabilities", format_currency(liabilities))
+    with b3:
+        st.metric("Net Worth", format_currency(net_worth))
+
 
 
 def _render_data_grid(
