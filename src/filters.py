@@ -51,7 +51,7 @@ class TransactionFilterConfig:
         include_refunds: bool = True,
         include_credit_card_payments: bool = True,
     ) -> "TransactionFilterConfig":
-        include_list = []
+        include_list: list[str] = []
         if isinstance(include_keywords, str):
             include_list = [part.strip() for part in include_keywords.split(",")]
         elif include_keywords:
@@ -82,14 +82,91 @@ class TransactionFilterConfig:
         return [kw.lower() for kw in self.exclude_keywords if kw]
 
     def excluded_types_with_toggles(self) -> set[str]:
+        """Return the normalized excluded types including toggle-driven exclusions.
+
+        Important: Monarch/normalized transaction types can vary slightly in naming.
+        We include a small set of common normalized variants to make toggles robust.
+        """
         base_excluded = self.normalized_excluded_types()
+
         if not self.include_transfers:
-            base_excluded.add(_normalize_type_value("transfer"))
+            base_excluded.update(
+                {
+                    _normalize_type_value("transfer"),
+                    _normalize_type_value("internal transfer"),
+                    _normalize_type_value("account transfer"),
+                }
+            )
+
         if not self.include_refunds:
-            base_excluded.add(_normalize_type_value("refund"))
+            base_excluded.update(
+                {
+                    _normalize_type_value("refund"),
+                    _normalize_type_value("refunds"),
+                }
+            )
+
         if not self.include_credit_card_payments:
-            base_excluded.add(_normalize_type_value("credit card payment"))
+            base_excluded.update(
+                {
+                    _normalize_type_value("credit card payment"),
+                    _normalize_type_value("credit card payments"),
+                    _normalize_type_value("cc payment"),
+                }
+            )
+
         return base_excluded
+
+
+def apply_transaction_type_filters(
+    df: pd.DataFrame,
+    *,
+    include_transfers: bool = True,
+    include_credit_card_payments: bool = True,
+) -> pd.DataFrame:
+    """Apply ONLY the transaction-type toggles to a DataFrame.
+
+    This is the single-source-of-truth helper that tabs should use when they need
+    to guarantee that 'Include transfers' and 'Include credit card payments'
+    actually change the dataset.
+
+    Notes
+    - Expects a normalized `transaction_type` column to exist for best results.
+    - Never mutates the input df.
+    """
+    if df is None or df.empty:
+        return df
+    if "transaction_type" not in df.columns:
+        return df
+
+    working = df.copy()
+    normalized_types = working["transaction_type"].apply(_normalize_type_value)
+
+    excluded: set[str] = set()
+    if not include_transfers:
+        excluded.update(
+            {
+                _normalize_type_value("transfer"),
+                _normalize_type_value("internal transfer"),
+                _normalize_type_value("account transfer"),
+            }
+        )
+    if not include_credit_card_payments:
+        excluded.update(
+            {
+                _normalize_type_value("credit card payment"),
+                _normalize_type_value("credit card payments"),
+                _normalize_type_value("cc payment"),
+            }
+        )
+
+    if not excluded:
+        return working
+
+    excluded_mask = normalized_types.apply(
+        lambda value: any(value == ex or value.startswith(f"{ex} ") for ex in excluded)
+    )
+    return working.loc[~excluded_mask].reset_index(drop=True)
 
 
 def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilterConfig) -> pd.DataFrame:
@@ -98,13 +175,12 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
     This function never mutates the input DataFrame and gracefully handles
     missing columns by returning the original DataFrame unchanged.
     """
-
     if transactions is None or transactions.empty or config is None:
         return transactions
 
     df = transactions.copy()
     starting_rows = len(df.index)
-    excluded_types = set()
+    excluded_types: set[str] = set()
 
     if "transaction_type" in df.columns:
         normalized_types = df["transaction_type"].apply(_normalize_type_value)
@@ -114,9 +190,7 @@ def apply_transaction_config(transactions: pd.DataFrame, config: TransactionFilt
             # Transfers and credit card payments are excluded from income/expense math when toggled
             # off so they do not distort cash flow or net calculations.
             excluded_mask = normalized_types.apply(
-                lambda value: any(
-                    value == ex or value.startswith(f"{ex} ") for ex in excluded
-                )
+                lambda value: any(value == ex or value.startswith(f"{ex} ") for ex in excluded)
             )
             df = df.loc[~excluded_mask]
 
@@ -200,6 +274,7 @@ def get_filtered_transactions(transactions: pd.DataFrame) -> pd.DataFrame:
 def period_options_for_scope(year_label: str) -> list[str]:
     """Return the allowed period options for a given year tab."""
     if str(year_label).upper() == ALL_YEARS_LABEL:
+        # Keep ALL YEARS last for symmetry in horizontal radio layouts.
         return ["Q1", "Q2", "Q3", "Q4", "ALL YEARS"]
     return ["Q1", "Q2", "Q3", "Q4", "FULL YEAR"]
 
@@ -325,3 +400,4 @@ def filter_transactions_for_scope(
         },
     )
     return scoped_filtered
+
