@@ -56,14 +56,16 @@ with tabs_by_label["Dashboard"]:
                 date_range=date_bounds,
             )
             scoped_accounts = _filter_accounts_for_range(active_accounts, date_bounds)
-            render_dashboard_tab(
-                scoped_transactions,
-                scoped_accounts,
-                year_label=label,
-                selected_period=control_state.selected_period,
-                date_range=date_bounds,
-                months_filter=control_state.months_filter,
-            )
+            from src.filters import get_filtered_transactions
+
+filtered_transactions = get_filtered_transactions(scoped_transactions)
+
+render_dashboard_tab(
+    filtered_transactions,
+    accounts_df,
+    ...
+)
+
 
 with tabs_by_label["Transactions"]:
     st.subheader("Transactions")
