@@ -11,7 +11,13 @@ import streamlit as st
 
 from src.config import ALL_YEARS_LABEL
 from src.debug import DEBUG_EVENTS_KEY, DEBUG_FLAG_KEY
-from src.filters import compute_scope_date_range, period_options_for_scope, reset_transaction_filter_config
+from src.filters import (
+    compute_scope_date_range,
+    period_options_for_scope,
+    reset_transaction_filter_config,
+    get_transaction_filter_config,
+    apply_transaction_type_filters,
+)
 from src.ingest import identify_csv_roles, normalize_accounts, normalize_transactions
 from ui.transaction_filters import render_transaction_filters
 
@@ -134,7 +140,6 @@ def reset_dashboard_state() -> None:
     for key in _SESSION_KEYS_TO_CLEAR:
         if key in st.session_state:
             st.session_state.pop(key, None)
-    # Clear cached transaction filters and uploader buffers explicitly
     st.session_state["monarch_csvs"] = None
     reset_transaction_filter_config()
 
@@ -160,13 +165,24 @@ def render_control_panel() -> ControlPanelState:
         key="monarch_csvs",
     )
 
-    transactions_df, accounts_df, status_message, error_message = _ingest_csv_uploads(uploaded_files)
+    raw_transactions, accounts_df, status_message, error_message = _ingest_csv_uploads(uploaded_files)
+
+    # -----------------------------
+    # Apply transaction-type toggles
+    # -----------------------------
+    filter_config = get_transaction_filter_config()
+    filtered_transactions = apply_transaction_type_filters(
+        raw_transactions,
+        include_transfers=filter_config.include_transfers,
+        include_credit_card_payments=filter_config.include_credit_card_payments,
+    )
 
     period_options = period_options_for_scope(ALL_YEARS_LABEL)
     preferred_default = "ALL YEARS" if "ALL YEARS" in period_options else "FULL YEAR"
     default_period = st.session_state.get("period_selection") or preferred_default
     if default_period not in period_options:
         default_period = preferred_default if preferred_default in period_options else period_options[0]
+
     period_container = st.sidebar.container()
     period_container.markdown("#### Period Selection")
     selected_period = period_container.radio(
@@ -177,10 +193,9 @@ def render_control_panel() -> ControlPanelState:
         horizontal=True,
         label_visibility="collapsed",
     )
-    period_container.caption("Period filters affect charts and metrics only — raw data remains unchanged.")
 
     date_bounds = compute_scope_date_range(
-        transactions_df,
+        filtered_transactions,
         year_label=ALL_YEARS_LABEL,
         period_label=selected_period,
         fallback_df=accounts_df,
@@ -194,28 +209,28 @@ def render_control_panel() -> ControlPanelState:
     if error_message:
         st.sidebar.error(error_message)
     elif status_message:
-        if "Upload balances" in status_message or "Could not identify both required CSVs" in status_message:
+        if "Upload balances" in status_message:
             st.sidebar.warning(status_message)
         else:
             st.sidebar.success(status_message)
-    elif transactions_df.empty and accounts_df.empty:
+    elif filtered_transactions.empty:
         st.sidebar.warning("Upload Transactions and Balances CSVs to unlock analytics.")
     else:
         st.sidebar.info("Data ready.")
 
     st.sidebar.markdown("---")
     render_transaction_filters(target=st.sidebar)
+
     st.sidebar.toggle(
         "Enable debug diagnostics",
         value=st.session_state.get(DEBUG_FLAG_KEY, False),
         key=DEBUG_FLAG_KEY,
-        help="Records row counts and metric totals behind the scenes for troubleshooting without altering data.",
     )
-    st.sidebar.markdown("---")
+
     st.sidebar.caption("Controls stay pinned for all tabs.")
 
     return ControlPanelState(
-        transactions=_coerce_dataframe(transactions_df),
+        transactions=_coerce_dataframe(filtered_transactions),
         accounts=_coerce_dataframe(accounts_df),
         selected_period=selected_period,
         date_range=date_bounds,
@@ -223,3 +238,4 @@ def render_control_panel() -> ControlPanelState:
         status=status_message,
         error=error_message,
     )
+
