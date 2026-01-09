@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import date
 
 from src.formatting import format_currency, format_date_range
-from src.metrics import summarize_cash_flow
 
 
 # -----------------------------
@@ -41,13 +40,15 @@ def render_dashboard_tab(
     date_range: tuple[date, date],
 ) -> None:
     """
-    Core rebuild dashboard.
+    Core rebuild dashboard (TRUE baseline).
 
-    Purpose:
-    - Validate baseline income / expense math
-    - No transaction-type logic
-    - No category logic
-    - No filters besides YEAR
+    Rules:
+    - Income = sum(amount > 0)
+    - Expenses = sum(abs(amount < 0))
+    - Net = Income - Expenses
+    - NO transaction-type logic
+    - NO category logic
+    - Year tabs are the ONLY filter
     """
 
     st.markdown("## Dashboard (Core Rebuild)")
@@ -67,32 +68,49 @@ def render_dashboard_tab(
             st.caption("Date Range")
             st.caption(format_date_range(date_range))
 
-            if scoped_tx.empty:
+            if scoped_tx.empty or "amount" not in scoped_tx.columns:
                 st.info("No transactions in scope.")
                 continue
 
             # -----------------------------
-            # Baseline Metrics
+            # TRUE Baseline Metrics
             # -----------------------------
 
-            totals = summarize_cash_flow(scoped_tx, date_range)
+            amounts = pd.to_numeric(
+                scoped_tx["amount"],
+                errors="coerce"
+            ).fillna(0.0)
+
+            income = float(amounts[amounts > 0].sum())
+            expenses = float((-amounts[amounts < 0]).sum())
+            net = float(income - expenses)
 
             st.markdown("### Key Metrics (Baseline)")
 
             c1, c2, c3 = st.columns(3)
 
             with c1:
-                st.metric("Income", format_currency(totals.income))
+                st.metric("Income", format_currency(income))
 
             with c2:
-                st.metric("Expenses", format_currency(abs(totals.expenses)))
+                st.metric("Expenses", format_currency(expenses))
 
             with c3:
-                st.metric("Net", format_currency(totals.net))
+                st.metric("Net", format_currency(net))
+
+            # -----------------------------
+            # Audit helpers (TEMPORARY)
+            # -----------------------------
 
             st.caption(
                 "Baseline mode: "
-                "Income = sum(positive amounts), "
-                "Expenses = sum(negative amounts). "
-                "Transfers / CC payments / refunds ignored for now."
+                "Income = sum(amount > 0), "
+                "Expenses = sum(abs(amount < 0)). "
+                "No transfer / CC / refund logic."
             )
+
+            st.caption(
+                f"Audit → Positive rows: {(amounts > 0).sum()} | "
+                f"Negative rows: {(amounts < 0).sum()}"
+            )
+
