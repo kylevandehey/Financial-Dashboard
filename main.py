@@ -22,13 +22,25 @@ tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
 # 3) Dashboard tab (baseline only)
 with tabs_by_label.get("Dashboard", primary_tabs[0]):
     st.subheader("Dashboard (Core Rebuild)")
-    render_dashboard_tab(
-        canonical_transactions,
-        canonical_accounts,
-        date_range=control_state.date_range,
-        year_label="ALL YEARS",
-        selected_period=control_state.selected_period,
+    # Build year labels for audit tabs
+years = []
+if not canonical_transactions.empty and "year" in canonical_transactions.columns:
+    years = sorted(
+        canonical_transactions["year"]
+        .dropna()
+        .unique()
+        .tolist(),
+        reverse=True,
     )
+
+year_labels = ["ALL YEARS"] + [str(y) for y in years]
+
+render_dashboard_tab(
+    transactions=canonical_transactions,
+    available_years=year_labels,
+    date_range=control_state.date_range,
+)
+
 
 # 4) Transactions tab (table only)
 with tabs_by_label.get("Transactions", primary_tabs[1] if len(primary_tabs) > 1 else primary_tabs[0]):
