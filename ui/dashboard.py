@@ -1,50 +1,98 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from typing import Optional
 
 from src.formatting import format_currency, format_date_range
+from src.metrics import summarize_cash_flow
 
 
-def _coerce_dataframe(data: Optional[pd.DataFrame]) -> pd.DataFrame:
-    if data is None:
+# -----------------------------
+# Helpers
+# -----------------------------
+
+def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None:
         return pd.DataFrame()
-    return pd.DataFrame(data).copy()
+    return pd.DataFrame(df).copy()
 
+
+def _filter_by_year(df: pd.DataFrame, year_label: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if year_label == "ALL YEARS":
+        return df
+    if "year" not in df.columns:
+        return df
+    try:
+        year = int(year_label)
+    except ValueError:
+        return df
+    return df[df["year"] == year]
+
+
+# -----------------------------
+# UI
+# -----------------------------
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
-    accounts: pd.DataFrame | None,
-    date_range: tuple[date, date] | None,
     *,
-    year_label: str,
-    selected_period: str,
-    **_ignored: object,
+    available_years: list[str],
+    date_range: tuple[date, date],
 ) -> None:
+    """
+    Core rebuild dashboard.
+
+    Purpose:
+    - Validate baseline income / expense math
+    - No transaction-type logic
+    - No category logic
+    - No filters besides YEAR
+    """
+
+    st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
-    st.caption(f"Scope: {year_label} · Period: {selected_period}")
 
-    if date_range:
-        st.caption("Date Range")
-        st.caption(format_date_range(date_range))
+    # -----------------------------
+    # Year Tabs (AUDIT CONTROL)
+    # -----------------------------
 
-    df = _coerce_dataframe(transactions)
+    year_tabs = st.tabs(available_years)
 
-    if df.empty or "amount" not in df.columns:
-        st.info("Upload a Transactions CSV with an Amount column to begin.")
-        return
+    for tab, year_label in zip(year_tabs, available_years):
+        with tab:
+            scoped_tx = _filter_by_year(_coerce_df(transactions), year_label)
 
-    # Baseline truth metrics (NO filters, NO categories, NO charts)
-    income = float(df.loc[df["amount"] > 0, "amount"].sum())
-    expenses = float(df.loc[df["amount"] < 0, "amount"].sum())
-    expenses_abs = abs(expenses)
-    net = income - expenses_abs
+            st.caption(f"Scope: {year_label}")
+            st.caption("Date Range")
+            st.caption(format_date_range(date_range))
 
-    st.markdown("#### Key Metrics (Baseline)")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Income", format_currency(income))
-    c2.metric("Expenses", format_currency(expenses_abs))
-    c3.metric("Net", format_currency(net))
+            if scoped_tx.empty:
+                st.info("No transactions in scope.")
+                continue
 
-    st.caption("Baseline mode: this ignores all transaction-type logic (transfers/CC payments/refunds). That will be reintroduced after baseline is correct.")
+            # -----------------------------
+            # Baseline Metrics
+            # -----------------------------
 
+            totals = summarize_cash_flow(scoped_tx, date_range)
+
+            st.markdown("### Key Metrics (Baseline)")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("Income", format_currency(totals.income))
+
+            with c2:
+                st.metric("Expenses", format_currency(abs(totals.expenses)))
+
+            with c3:
+                st.metric("Net", format_currency(totals.net))
+
+            st.caption(
+                "Baseline mode: "
+                "Income = sum(positive amounts), "
+                "Expenses = sum(negative amounts). "
+                "Transfers / CC payments / refunds ignored for now."
+            )
