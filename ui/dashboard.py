@@ -16,17 +16,19 @@ def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _filter_by_year(df: pd.DataFrame, year_label: str) -> pd.DataFrame:
-    if df.empty:
+    if df.empty or year_label == "ALL YEARS":
         return df
-    if year_label == "ALL YEARS":
+
+    if "date" not in df.columns:
         return df
-    if "year" not in df.columns:
-        return df
+
     try:
         year = int(year_label)
     except ValueError:
         return df
-    return df[df["year"] == year]
+
+    dates = pd.to_datetime(df["date"], errors="coerce")
+    return df.loc[dates.dt.year == year]
 
 
 # -----------------------------
