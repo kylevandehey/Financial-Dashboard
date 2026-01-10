@@ -30,51 +30,63 @@ def _filter_by_year(df: pd.DataFrame, year_label: str) -> pd.DataFrame:
 def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     if df.empty or "date" not in df.columns:
         return None
-
     dates = pd.to_datetime(df["date"], errors="coerce").dropna()
     if dates.empty:
         return None
-
     return dates.min().date(), dates.max().date()
 
 
-def _normalize_type_value(raw_type: object) -> str:
-    normalized = str(raw_type or "").lower().replace("_", " ").replace("-", " ")
-    return " ".join(normalized.split())
+def _norm(s: object) -> str:
+    return " ".join(str(s or "").lower().replace("_", " ").replace("-", " ").split())
 
 
-def _type_series(df: pd.DataFrame) -> pd.Series:
+def _first_present_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _build_exclusion_mask(df: pd.DataFrame, excluded: set[str]) -> tuple[pd.Series, str]:
     """
-    Best-effort transaction type extraction.
-    We prefer 'transaction_type' but fallback to 'type' if present.
+    Returns (mask, detection_source)
+
+    Priority:
+      1) transaction_type / type
+      2) category
+      3) keyword scan of text columns (merchant/notes/original_statement)
     """
-    if "transaction_type" in df.columns:
-        return df["transaction_type"].apply(_normalize_type_value)
-    if "type" in df.columns:
-        return df["type"].apply(_normalize_type_value)
-    return pd.Series([""] * len(df.index), index=df.index)
+    if df.empty:
+        return pd.Series([], dtype=bool), "none"
 
+    # 1) transaction_type / type
+    type_col = _first_present_column(df, ["transaction_type", "type"])
+    if type_col:
+        series = df[type_col].apply(_norm)
+        mask = series.apply(lambda v: any(v == ex or v.startswith(f"{ex} ") for ex in excluded))
+        return mask.fillna(False), type_col
 
-def _excluded_mask(df: pd.DataFrame, excluded_types: set[str]) -> pd.Series:
-    """
-    Exclude rows whose normalized transaction_type equals (or starts with) an excluded token.
-    Examples handled:
-      - "credit card payment"
-      - "credit card payment - autopay"
-    """
-    types = _type_series(df)
-    if types.empty:
-        return pd.Series([False] * len(df.index), index=df.index)
+    # 2) category fallback (this matches what your spreadsheet screenshot shows)
+    cat_col = _first_present_column(df, ["category", "Category"])
+    if cat_col:
+        series = df[cat_col].apply(_norm)
+        mask = series.apply(lambda v: any(v == ex or v.startswith(f"{ex} ") for ex in excluded))
+        return mask.fillna(False), cat_col
 
-    def _is_excluded(value: str) -> bool:
-        if not value:
-            return False
-        for ex in excluded_types:
-            if value == ex or value.startswith(f"{ex} "):
-                return True
-        return False
+    # 3) keyword scan fallback (last resort)
+    scan_cols = [c for c in ["merchant", "notes", "original_statement"] if c in df.columns]
+    if scan_cols:
+        haystack = (
+            df[scan_cols]
+            .fillna("")
+            .astype(str)
+            .agg(" ".join, axis=1)
+            .apply(_norm)
+        )
+        mask = haystack.apply(lambda txt: any(ex in txt for ex in excluded))
+        return mask.fillna(False), "keyword_scan"
 
-    return types.apply(_is_excluded)
+    return pd.Series([False] * len(df.index), index=df.index), "none"
 
 
 def render_dashboard_tab(
@@ -82,29 +94,13 @@ def render_dashboard_tab(
     *,
     available_years: list[str],
 ) -> None:
-    """
-    Core rebuild dashboard (Cash Flow v1).
-
-    Business definition (v1):
-    - Income = sum(amount > 0) excluding Transfers / Credit Card Payments / Refunds
-    - Expenses = sum(abs(amount < 0)) excluding Transfers / Credit Card Payments / Refunds
-    - Net = Income - Expenses
-
-    This matches your expectation that:
-    - Transfers and CC Payments should NOT distort cash flow
-    """
-
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
 
-    year_tabs = st.tabs(available_years)
+    # Keep exclusions narrow and explicit for now
+    excluded_types = {"transfer", "credit card payment", "refund"}
 
-    # v1 exclusions (expand later if needed)
-    excluded_types = {
-        "transfer",
-        "credit card payment",
-        "refund",
-    }
+    year_tabs = st.tabs(available_years)
 
     for tab, year_label in zip(year_tabs, available_years):
         with tab:
@@ -112,7 +108,6 @@ def render_dashboard_tab(
             derived_range = _derive_date_range(scoped_tx)
 
             st.caption(f"Scope: {year_label}")
-
             if derived_range:
                 st.caption("Date Range")
                 st.caption(format_date_range(derived_range))
@@ -123,8 +118,7 @@ def render_dashboard_tab(
 
             amounts = pd.to_numeric(scoped_tx["amount"], errors="coerce").fillna(0.0)
 
-            # Exclude transfers/cc/refunds from BOTH income and expenses
-            mask_excluded = _excluded_mask(scoped_tx, excluded_types)
+            mask_excluded, source = _build_exclusion_mask(scoped_tx, excluded_types)
             included_amounts = amounts.loc[~mask_excluded]
 
             positive = included_amounts[included_amounts > 0]
@@ -136,7 +130,6 @@ def render_dashboard_tab(
 
             st.markdown("### Key Metrics (Core Cash Flow v1)")
             c1, c2, c3 = st.columns(3)
-
             with c1:
                 st.metric("Income", format_currency(income))
             with c2:
@@ -144,30 +137,23 @@ def render_dashboard_tab(
             with c3:
                 st.metric("Net", format_currency(net))
 
-            # --- Audit (temporary but extremely useful) ---
+            # --- Audit ---
             raw_positive = int((amounts > 0).sum())
             raw_negative = int((amounts < 0).sum())
             excl_count = int(mask_excluded.sum())
 
-            types_found = _type_series(scoped_tx)
-            excluded_breakdown = (
-                scoped_tx.loc[mask_excluded]
-                .assign(_tx_type=types_found.loc[mask_excluded])
-                .groupby("_tx_type")["amount"]
-                .agg(["count", "sum"])
-                .sort_values("count", ascending=False)
-                .reset_index()
-            )
-
             st.caption(
-                "Audit (v1): "
-                f"Raw + rows: {raw_positive} | Raw - rows: {raw_negative} | "
-                f"Excluded rows: {excl_count}"
+                f"Audit (v1): Raw + rows: {raw_positive} | Raw - rows: {raw_negative} | "
+                f"Excluded rows: {excl_count} | Detection source: {source}"
             )
 
             if excl_count > 0:
-                with st.expander("Show excluded rows breakdown (temporary audit)", expanded=False):
-                    st.dataframe(excluded_breakdown, use_container_width=True)
+                # Show what got excluded so we can confirm correctness quickly
+                preview_cols = [c for c in ["date", "merchant", "category", "transaction_type", "type", "amount", "notes", "original_statement"] if c in scoped_tx.columns]
+                excluded_df = scoped_tx.loc[mask_excluded, preview_cols].copy()
+                with st.expander("Show excluded transactions (temporary audit)", expanded=False):
+                    st.dataframe(excluded_df, use_container_width=True)
+
 
 
 
