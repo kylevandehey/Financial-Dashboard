@@ -5,10 +5,6 @@ from datetime import date
 from src.formatting import format_currency, format_date_range
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-
 def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -42,27 +38,60 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     return dates.min().date(), dates.max().date()
 
 
-# -----------------------------
-# UI
-# -----------------------------
+def _normalize_type_value(raw_type: object) -> str:
+    normalized = str(raw_type or "").lower().replace("_", " ").replace("-", " ")
+    return " ".join(normalized.split())
+
+
+def _type_series(df: pd.DataFrame) -> pd.Series:
+    """
+    Best-effort transaction type extraction.
+    We prefer 'transaction_type' but fallback to 'type' if present.
+    """
+    if "transaction_type" in df.columns:
+        return df["transaction_type"].apply(_normalize_type_value)
+    if "type" in df.columns:
+        return df["type"].apply(_normalize_type_value)
+    return pd.Series([""] * len(df.index), index=df.index)
+
+
+def _excluded_mask(df: pd.DataFrame, excluded_types: set[str]) -> pd.Series:
+    """
+    Exclude rows whose normalized transaction_type equals (or starts with) an excluded token.
+    Examples handled:
+      - "credit card payment"
+      - "credit card payment - autopay"
+    """
+    types = _type_series(df)
+    if types.empty:
+        return pd.Series([False] * len(df.index), index=df.index)
+
+    def _is_excluded(value: str) -> bool:
+        if not value:
+            return False
+        for ex in excluded_types:
+            if value == ex or value.startswith(f"{ex} "):
+                return True
+        return False
+
+    return types.apply(_is_excluded)
+
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
     available_years: list[str],
-    date_range: tuple[date, date] | None = None,  # ignored intentionally
 ) -> None:
     """
-    Core rebuild dashboard (TRUE baseline).
+    Core rebuild dashboard (Cash Flow v1).
 
-    Rules:
-    - Income = sum(amount > 0)
-    - Expenses = sum(abs(amount < 0))
+    Business definition (v1):
+    - Income = sum(amount > 0) excluding Transfers / Credit Card Payments / Refunds
+    - Expenses = sum(abs(amount < 0)) excluding Transfers / Credit Card Payments / Refunds
     - Net = Income - Expenses
-    - NO transaction-type logic
-    - NO category logic
-    - NO external date filtering
-    - Year tabs are the ONLY filter
+
+    This matches your expectation that:
+    - Transfers and CC Payments should NOT distort cash flow
     """
 
     st.markdown("## Dashboard (Core Rebuild)")
@@ -70,10 +99,16 @@ def render_dashboard_tab(
 
     year_tabs = st.tabs(available_years)
 
+    # v1 exclusions (expand later if needed)
+    excluded_types = {
+        "transfer",
+        "credit card payment",
+        "refund",
+    }
+
     for tab, year_label in zip(year_tabs, available_years):
         with tab:
             scoped_tx = _filter_by_year(_coerce_df(transactions), year_label)
-
             derived_range = _derive_date_range(scoped_tx)
 
             st.caption(f"Scope: {year_label}")
@@ -86,49 +121,53 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            # -----------------------------
-            # TRUE Baseline Metrics
-            # -----------------------------
+            amounts = pd.to_numeric(scoped_tx["amount"], errors="coerce").fillna(0.0)
 
-            amounts = pd.to_numeric(
-                scoped_tx["amount"],
-                errors="coerce"
-            ).fillna(0.0)
+            # Exclude transfers/cc/refunds from BOTH income and expenses
+            mask_excluded = _excluded_mask(scoped_tx, excluded_types)
+            included_amounts = amounts.loc[~mask_excluded]
 
-            positive = amounts[amounts > 0]
-            negative = amounts[amounts < 0]
+            positive = included_amounts[included_amounts > 0]
+            negative = included_amounts[included_amounts < 0]
 
             income = float(positive.sum())
             expenses = float((-negative).sum())
             net = float(income - expenses)
 
-            st.markdown("### Key Metrics (Baseline)")
-
+            st.markdown("### Key Metrics (Core Cash Flow v1)")
             c1, c2, c3 = st.columns(3)
 
             with c1:
                 st.metric("Income", format_currency(income))
-
             with c2:
                 st.metric("Expenses", format_currency(expenses))
-
             with c3:
                 st.metric("Net", format_currency(net))
 
-            # -----------------------------
-            # Audit helpers (TEMPORARY)
-            # -----------------------------
+            # --- Audit (temporary but extremely useful) ---
+            raw_positive = int((amounts > 0).sum())
+            raw_negative = int((amounts < 0).sum())
+            excl_count = int(mask_excluded.sum())
 
-            st.caption(
-                "Baseline mode: "
-                "Income = sum(amount > 0), "
-                "Expenses = sum(abs(amount < 0)). "
-                "No transfer / CC / refund logic."
+            types_found = _type_series(scoped_tx)
+            excluded_breakdown = (
+                scoped_tx.loc[mask_excluded]
+                .assign(_tx_type=types_found.loc[mask_excluded])
+                .groupby("_tx_type")["amount"]
+                .agg(["count", "sum"])
+                .sort_values("count", ascending=False)
+                .reset_index()
             )
 
             st.caption(
-                f"Audit → Positive rows: {len(positive)} | "
-                f"Negative rows: {len(negative)}"
+                "Audit (v1): "
+                f"Raw + rows: {raw_positive} | Raw - rows: {raw_negative} | "
+                f"Excluded rows: {excl_count}"
             )
+
+            if excl_count > 0:
+                with st.expander("Show excluded rows breakdown (temporary audit)", expanded=False):
+                    st.dataframe(excluded_breakdown, use_container_width=True)
+
 
 
