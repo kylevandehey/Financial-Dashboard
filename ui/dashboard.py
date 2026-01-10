@@ -1,3 +1,25 @@
+"""
+CORE CASH FLOW — CANONICAL LOGIC
+
+This module defines the single source of truth for income, expense,
+and net cash flow calculations across the entire application.
+
+RULES:
+- Income = sum(amount > 0)
+- Expenses = sum(abs(amount < 0))
+- Exclusions are CATEGORY-driven
+- transaction_type is intentionally ignored
+- Keyword fallback applies if category is missing
+- All dashboards, charts, and exports MUST consume this logic
+
+DO NOT:
+- Recalculate income/expenses elsewhere
+- Use transaction_type for exclusion logic
+- Bypass this module for UI metrics
+
+Any changes here require explicit audit validation.
+"""
+
 import streamlit as st
 import pandas as pd
 from datetime import date
