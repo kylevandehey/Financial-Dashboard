@@ -27,6 +27,10 @@ from datetime import date
 from src.formatting import format_currency, format_date_range
 
 
+# -----------------------------
+# Helpers
+# -----------------------------
+
 def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -56,14 +60,25 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
 
 
 def _norm(val: object) -> str:
-    return " ".join(str(val or "").lower().replace("_", " ").replace("-", " ").split())
+    return " ".join(
+        str(val or "")
+        .lower()
+        .replace("_", " ")
+        .replace("-", " ")
+        .split()
+    )
 
 
 def _build_exclusion_mask(df: pd.DataFrame) -> pd.Series:
     """
-    Monarch-authoritative exclusion:
-    - Use Category column FIRST
-    - Ignore transaction_type entirely
+    CATEGORY-first exclusion logic (Monarch-aligned)
+
+    Explicit exclusions:
+    - transfer
+    - credit card payment
+    - refund
+
+    transaction_type is intentionally ignored.
     """
     if df.empty:
         return pd.Series(False, index=df.index)
@@ -78,7 +93,7 @@ def _build_exclusion_mask(df: pd.DataFrame) -> pd.Series:
         cat_norm = df["category"].apply(_norm)
         return cat_norm.isin(excluded_categories)
 
-    # Fallback: keyword scan
+    # Keyword fallback (for non-Monarch CSVs)
     scan_cols = [c for c in ["merchant", "notes", "original_statement"] if c in df.columns]
     if scan_cols:
         haystack = (
@@ -94,6 +109,10 @@ def _build_exclusion_mask(df: pd.DataFrame) -> pd.Series:
 
     return pd.Series(False, index=df.index)
 
+
+# -----------------------------
+# UI
+# -----------------------------
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
@@ -119,16 +138,26 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            amounts = pd.to_numeric(scoped_tx["amount"], errors="coerce").fillna(0.0)
+            amounts = pd.to_numeric(
+                scoped_tx["amount"],
+                errors="coerce"
+            ).fillna(0.0)
 
             exclusion_mask = _build_exclusion_mask(scoped_tx)
-            included = amounts.loc[~exclusion_mask]
 
-            income = float(included[included > 0].sum())
-            expenses = float((-included[included < 0]).sum())
+            included_amounts = amounts.loc[~exclusion_mask]
+            excluded_amounts = amounts.loc[exclusion_mask]
+
+            income = float(included_amounts[included_amounts > 0].sum())
+            expenses = float((-included_amounts[included_amounts < 0]).sum())
             net = float(income - expenses)
 
-            st.markdown("### Key Metrics (Core Cash Flow v1)")
+            # -----------------------------
+            # Core Metrics
+            # -----------------------------
+
+            st.markdown("### Key Metrics (Core Cash Flow)")
+
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.metric("Income", format_currency(income))
@@ -137,13 +166,41 @@ def render_dashboard_tab(
             with c3:
                 st.metric("Net", format_currency(net))
 
-            # ---- Audit ----
+            # -----------------------------
+            # Audit Summary
+            # -----------------------------
+
             st.caption(
                 f"Audit: Included rows = {(~exclusion_mask).sum()} | "
                 f"Excluded rows = {exclusion_mask.sum()} | "
-                f"Category-driven exclusions"
+                "Category-driven exclusions"
             )
 
+            if not excluded_amounts.empty:
+                excluded_total = excluded_amounts.sum()
+                excluded_positive = excluded_amounts[excluded_amounts > 0].sum()
+                excluded_negative = excluded_amounts[excluded_amounts < 0].sum()
+
+                st.markdown(
+                    f"**Excluded totals:** "
+                    f"{format_currency(abs(excluded_total))} "
+                    f"(+{format_currency(excluded_positive)} / "
+                    f"{format_currency(excluded_negative)})"
+                )
+            else:
+                st.markdown("**Excluded totals:** $0.00")
+
+            # -----------------------------
+            # Excluded Rows (Audit)
+            # -----------------------------
+
             with st.expander("Show excluded rows (audit)", expanded=False):
-                cols = [c for c in ["date", "merchant", "category", "amount"] if c in scoped_tx.columns]
-                st.dataframe(scoped_tx.loc[exclusion_mask, cols], use_container_width=True)
+                cols = [
+                    c for c in
+                    ["date", "merchant", "category", "amount"]
+                    if c in scoped_tx.columns
+                ]
+                st.dataframe(
+                    scoped_tx.loc[exclusion_mask, cols],
+                    use_container_width=True
+                )
