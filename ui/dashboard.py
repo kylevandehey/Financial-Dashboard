@@ -31,6 +31,17 @@ def _filter_by_year(df: pd.DataFrame, year_label: str) -> pd.DataFrame:
     return df.loc[dates.dt.year == year]
 
 
+def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
+    if df.empty or "date" not in df.columns:
+        return None
+
+    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+
+    return dates.min().date(), dates.max().date()
+
+
 # -----------------------------
 # UI
 # -----------------------------
@@ -39,7 +50,7 @@ def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
     available_years: list[str],
-    date_range: tuple[date, date],
+    date_range: tuple[date, date] | None = None,  # ignored intentionally
 ) -> None:
     """
     Core rebuild dashboard (TRUE baseline).
@@ -50,15 +61,12 @@ def render_dashboard_tab(
     - Net = Income - Expenses
     - NO transaction-type logic
     - NO category logic
+    - NO external date filtering
     - Year tabs are the ONLY filter
     """
 
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
-
-    # -----------------------------
-    # Year Tabs (AUDIT CONTROL)
-    # -----------------------------
 
     year_tabs = st.tabs(available_years)
 
@@ -66,9 +74,13 @@ def render_dashboard_tab(
         with tab:
             scoped_tx = _filter_by_year(_coerce_df(transactions), year_label)
 
+            derived_range = _derive_date_range(scoped_tx)
+
             st.caption(f"Scope: {year_label}")
-            st.caption("Date Range")
-            st.caption(format_date_range(date_range))
+
+            if derived_range:
+                st.caption("Date Range")
+                st.caption(format_date_range(derived_range))
 
             if scoped_tx.empty or "amount" not in scoped_tx.columns:
                 st.info("No transactions in scope.")
@@ -83,8 +95,11 @@ def render_dashboard_tab(
                 errors="coerce"
             ).fillna(0.0)
 
-            income = float(amounts[amounts > 0].sum())
-            expenses = float((-amounts[amounts < 0]).sum())
+            positive = amounts[amounts > 0]
+            negative = amounts[amounts < 0]
+
+            income = float(positive.sum())
+            expenses = float((-negative).sum())
             net = float(income - expenses)
 
             st.markdown("### Key Metrics (Baseline)")
@@ -112,7 +127,8 @@ def render_dashboard_tab(
             )
 
             st.caption(
-                f"Audit → Positive rows: {(amounts > 0).sum()} | "
-                f"Negative rows: {(amounts < 0).sum()}"
+                f"Audit → Positive rows: {len(positive)} | "
+                f"Negative rows: {len(negative)}"
             )
+
 
