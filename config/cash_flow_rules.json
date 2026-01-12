@@ -1,0 +1,19 @@
+{
+  "excluded_categories": [
+    "transfer",
+    "credit card payment"
+  ],
+  "force_income_categories": [
+    "salary",
+    "paycheck",
+    "income"
+  ],
+  "force_non_income_categories": [
+    "shopping",
+    "groceries"
+  ],
+  "income_text_keywords": [
+    "direct deposit",
+    "payroll"
+  ]
+}
