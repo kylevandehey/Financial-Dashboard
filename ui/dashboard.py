@@ -6,10 +6,6 @@ from src.formatting import format_currency, format_date_range
 from src.cash_flow import compute_cash_flow, build_exclusion_mask
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-
 def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
@@ -38,23 +34,12 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     return dates.min().date(), dates.max().date()
 
 
-# -----------------------------
-# UI
-# -----------------------------
-
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
     available_years: list[str],
-    date_range: tuple[date, date] | None = None,  # intentionally ignored
+    date_range: tuple[date, date] | None = None,  # intentionally ignored (derived per tab)
 ) -> None:
-    """
-    Dashboard (Core Rebuild)
-
-    All metrics are powered by src.cash_flow and must NOT
-    recalculate income / expenses locally.
-    """
-
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
 
@@ -74,10 +59,7 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            # -----------------------------
-            # Canonical Cash Flow
-            # -----------------------------
-
+            # Canonical engine
             result = compute_cash_flow(scoped_tx)
 
             st.markdown("### Key Metrics (Core Cash Flow)")
@@ -96,45 +78,28 @@ def render_dashboard_tab(
                 f"Category-driven exclusions"
             )
 
-            # -----------------------------
-            # Excluded totals (above expander)
-            # -----------------------------
-
+            # Excluded totals line (above expander)
             mask = build_exclusion_mask(scoped_tx)
-            excluded_amounts = (
-                pd.to_numeric(scoped_tx.loc[mask, "amount"], errors="coerce")
-                .fillna(0.0)
-            )
-
+            excluded_amounts = pd.to_numeric(scoped_tx.loc[mask, "amount"], errors="coerce").fillna(0.0)
             excluded_net = float(excluded_amounts.sum())
             excluded_pos = float(excluded_amounts[excluded_amounts > 0].sum())
-            excluded_neg = float((-excluded_amounts[excluded_amounts < 0]).sum())
+            excluded_neg_abs = float((-excluded_amounts[excluded_amounts < 0]).sum())
 
             st.markdown(
                 f"**Excluded totals:** {format_currency(excluded_net)} "
-                f"({format_currency(excluded_pos)} / {format_currency(-excluded_neg)})"
+                f"({format_currency(excluded_pos)} / {format_currency(-excluded_neg_abs)})"
             )
-
-            # -----------------------------
-            # Excluded rows (audit)
-            # -----------------------------
 
             with st.expander("Show excluded rows (audit)", expanded=False):
                 cols = [c for c in ["date", "merchant", "category", "amount"] if c in scoped_tx.columns]
-                st.dataframe(
-                    scoped_tx.loc[mask, cols],
-                    use_container_width=True
-                )
+                st.dataframe(scoped_tx.loc[mask, cols], use_container_width=True)
 
-            # -----------------------------
-            # Expense offset transparency
-            # -----------------------------
-
+            # Transparency line (this reflects the new offset behavior)
             st.caption(
-                f"Expense offsets (positive non-income): "
-                f"{format_currency(result.expense_offsets)} | "
+                f"Expense offsets (positive non-income): {format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
