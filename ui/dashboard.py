@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import date
 
 from src.formatting import format_currency, format_date_range
@@ -101,6 +102,192 @@ def _rules_json_template_from_data(df: pd.DataFrame) -> str:
     return json.dumps(template, indent=2)
 
 
+def _add_month_start(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "date" not in df.columns:
+        return df
+    out = df.copy()
+    dt = pd.to_datetime(out["date"], errors="coerce")
+    out["month_start"] = dt.dt.to_period("M").dt.to_timestamp()
+    return out
+
+
+def _currency_tooltip_value(series: pd.Series) -> pd.Series:
+    # Builds "$1,234.56" style strings for tooltips (Altair-friendly)
+    vals = pd.to_numeric(series, errors="coerce").fillna(0.0).astype(float)
+    return vals.apply(lambda v: f"${v:,.2f}" if v >= 0 else f"(${abs(v):,.2f})")
+
+
+def _monthly_cash_flow_frames(scoped_tx: pd.DataFrame, classification) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Returns:
+      - grouped_df: month_start x metric_type (Income, Net Expenses, Net Cash)
+      - components_df: month_start x component_type (Gross Expenses, Offsets, Net Expenses)
+    All logic is mask-driven from canonical classification.
+    """
+    if scoped_tx.empty or "amount" not in scoped_tx.columns or "date" not in scoped_tx.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df = scoped_tx.copy()
+    df = _add_month_start(df)
+
+    amounts = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
+
+    # Canonical masks
+    inc_mask = classification.income_mask
+    off_mask = classification.offset_mask
+    exp_mask = classification.expense_mask
+    included_mask = classification.included_mask
+
+    # Monthly Income (positive income-like)
+    income_m = (
+        amounts.loc[inc_mask]
+        .groupby(df.loc[inc_mask, "month_start"])
+        .sum()
+        .rename("income")
+    )
+
+    # Monthly Gross Expenses (abs of negative)
+    gross_exp_m = (
+        (-amounts.loc[exp_mask])
+        .groupby(df.loc[exp_mask, "month_start"])
+        .sum()
+        .rename("gross_expenses")
+    )
+
+    # Monthly Offsets (positive non-income)
+    offsets_m = (
+        amounts.loc[off_mask]
+        .groupby(df.loc[off_mask, "month_start"])
+        .sum()
+        .rename("offsets")
+    )
+
+    # Monthly Net Expenses (gross - offsets)
+    idx = income_m.index.union(gross_exp_m.index).union(offsets_m.index)
+    income_m = income_m.reindex(idx, fill_value=0.0)
+    gross_exp_m = gross_exp_m.reindex(idx, fill_value=0.0)
+    offsets_m = offsets_m.reindex(idx, fill_value=0.0)
+    net_exp_m = (gross_exp_m - offsets_m).rename("net_expenses")
+
+    # Monthly Net Cash
+    net_cash_m = (income_m - net_exp_m).rename("net_cash")
+
+    # Build grouped chart frame (Income vs Net Expenses + Net Cash line option)
+    grouped_df = pd.DataFrame({
+        "month_start": idx,
+        "Income": income_m.values,
+        "Net Expenses": net_exp_m.values,
+        "Net Cash": net_cash_m.values,
+    })
+    grouped_long = grouped_df.melt(
+        id_vars=["month_start"],
+        value_vars=["Income", "Net Expenses", "Net Cash"],
+        var_name="metric",
+        value_name="value",
+    )
+    grouped_long["value_fmt"] = _currency_tooltip_value(grouped_long["value"])
+
+    # Build components frame
+    components_df = pd.DataFrame({
+        "month_start": idx,
+        "Gross Expenses": gross_exp_m.values,
+        "Offsets": offsets_m.values,
+        "Net Expenses": net_exp_m.values,
+    })
+    components_long = components_df.melt(
+        id_vars=["month_start"],
+        value_vars=["Gross Expenses", "Offsets", "Net Expenses"],
+        var_name="component",
+        value_name="value",
+    )
+    components_long["value_fmt"] = _currency_tooltip_value(components_long["value"])
+
+    # Optional sanity: ensure months come in order
+    grouped_long = grouped_long.sort_values(["month_start", "metric"]).reset_index(drop=True)
+    components_long = components_long.sort_values(["month_start", "component"]).reset_index(drop=True)
+
+    return grouped_long, components_long
+
+
+def _render_monthly_cash_flow_charts(scoped_tx: pd.DataFrame, classification) -> None:
+    grouped_long, components_long = _monthly_cash_flow_frames(scoped_tx, classification)
+    if grouped_long.empty:
+        st.info("Not enough date/amount data to render charts for this scope.")
+        return
+
+    st.markdown("### Cash Flow Charts (Canonical)")
+
+    show_net_line = st.toggle(
+        "Show Net Cash line overlay",
+        value=True,
+        help="Net Cash = Income - Net Expenses (derived from canonical masks).",
+        key=f"cf_show_net_line_{hash(tuple(grouped_long['month_start'].astype(str).head(3).tolist()))}",
+    )
+
+    # Grouped bars: Income vs Net Expenses side-by-side
+    bars_source = grouped_long[grouped_long["metric"].isin(["Income", "Net Expenses"])].copy()
+
+    bar_chart = (
+        alt.Chart(bars_source)
+        .mark_bar()
+        .encode(
+            x=alt.X("month_start:T", title="Month"),
+            xOffset=alt.XOffset("metric:N"),
+            y=alt.Y("value:Q", title="Amount"),
+            tooltip=[
+                alt.Tooltip("month_start:T", title="Month"),
+                alt.Tooltip("metric:N", title="Metric"),
+                alt.Tooltip("value_fmt:N", title="Amount"),
+            ],
+        )
+        .properties(height=280)
+    )
+
+    if show_net_line:
+        net_source = grouped_long[grouped_long["metric"] == "Net Cash"].copy()
+        line_chart = (
+            alt.Chart(net_source)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("month_start:T", title="Month"),
+                y=alt.Y("value:Q", title="Amount"),
+                tooltip=[
+                    alt.Tooltip("month_start:T", title="Month"),
+                    alt.Tooltip("value_fmt:N", title="Net Cash"),
+                ],
+            )
+        )
+        st.altair_chart(bar_chart + line_chart, use_container_width=True)
+    else:
+        st.altair_chart(bar_chart, use_container_width=True)
+
+    st.divider()
+
+    # Components view: Gross Expenses, Offsets, Net Expenses (grouped bars)
+    comp_chart = (
+        alt.Chart(components_long)
+        .mark_bar()
+        .encode(
+            x=alt.X("month_start:T", title="Month"),
+            xOffset=alt.XOffset("component:N"),
+            y=alt.Y("value:Q", title="Amount"),
+            tooltip=[
+                alt.Tooltip("month_start:T", title="Month"),
+                alt.Tooltip("component:N", title="Component"),
+                alt.Tooltip("value_fmt:N", title="Amount"),
+            ],
+        )
+        .properties(height=260)
+    )
+    st.altair_chart(comp_chart, use_container_width=True)
+
+    st.caption(
+        "All chart series are computed from canonical classification masks: "
+        "Income (income-like positives), Gross Expenses (absolute negatives), "
+        "Offsets (positive non-income), Net Expenses (gross - offsets)."
+    )
+
+
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
@@ -130,7 +317,7 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            # Canonical engine
+            # Canonical engine + canonical classification
             result = compute_cash_flow(scoped_tx, rules=rules)
             classification = classify_transactions(scoped_tx, rules=rules)
             audit = classification.audit
@@ -149,6 +336,11 @@ def render_dashboard_tab(
                 f"Income confidence → High:{result.income_conf_high} | "
                 f"Medium:{result.income_conf_med} | Low:{result.income_conf_low}"
             )
+
+            st.divider()
+
+            # NEW: charts (must be canonical)
+            _render_monthly_cash_flow_charts(scoped_tx, classification)
 
             st.divider()
             st.markdown("### Classification Audit (Robustness Layer)")
@@ -180,7 +372,7 @@ def render_dashboard_tab(
 
             st.divider()
 
-            # Excluded totals line (requested previously)
+            # Excluded totals line (above expander)
             excluded_amounts = pd.to_numeric(scoped_tx.loc[classification.exclusion_mask, "amount"], errors="coerce").fillna(0.0)
             excluded_net = float(excluded_amounts.sum())
             excluded_pos = float(excluded_amounts[excluded_amounts > 0].sum())
@@ -209,6 +401,7 @@ def render_dashboard_tab(
                     "to override categories/keywords without changing application code."
                 )
                 st.code(_rules_json_template_from_data(scoped_tx), language="json")
+
 
 
 
