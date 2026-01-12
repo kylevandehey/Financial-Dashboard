@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 
 from src.formatting import format_currency, format_date_range
-from src.cash_flow import compute_cash_flow, build_exclusion_mask
+from src.cash_flow import compute_cash_flow, build_exclusion_mask, load_cash_flow_rules
 
 
 def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
@@ -34,6 +34,14 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     return dates.min().date(), dates.max().date()
 
 
+@st.cache_data(show_spinner=False)
+def _get_rules_cached(rules_path_hint: str | None) -> tuple[object, str]:
+    # Cached to avoid re-reading on every rerun.
+    # If you change the rules file, Streamlit may still cache until rerun; that’s acceptable.
+    rules, resolved_path = load_cash_flow_rules(rules_path_hint)
+    return rules, (resolved_path or "DEFAULT_RULES (no file found)")
+
+
 def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
@@ -42,6 +50,12 @@ def render_dashboard_tab(
 ) -> None:
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
+
+    # Optional: allow a rules path hint via Streamlit secrets or hardcoded later
+    rules_path_hint = None
+    rules, rules_source = _get_rules_cached(rules_path_hint)
+
+    st.caption(f"Cash Flow Rules Source: {rules_source}")
 
     year_tabs = st.tabs(available_years)
 
@@ -59,7 +73,8 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            result = compute_cash_flow(scoped_tx)
+            # Canonical engine (now rule-aware)
+            result = compute_cash_flow(scoped_tx, rules=rules)
 
             st.markdown("### Key Metrics (Core Cash Flow)")
 
@@ -84,18 +99,16 @@ def render_dashboard_tab(
                 f"Category-driven exclusions"
             )
 
-            mask = build_exclusion_mask(scoped_tx)
-            excluded_amounts = pd.to_numeric(
-                scoped_tx.loc[mask, "amount"], errors="coerce"
-            ).fillna(0.0)
-
+            # Excluded totals line (above expander) - must use same rules
+            mask = build_exclusion_mask(scoped_tx, rules=rules)
+            excluded_amounts = pd.to_numeric(scoped_tx.loc[mask, "amount"], errors="coerce").fillna(0.0)
             excluded_net = float(excluded_amounts.sum())
             excluded_pos = float(excluded_amounts[excluded_amounts > 0].sum())
-            excluded_neg = float((-excluded_amounts[excluded_amounts < 0]).sum())
+            excluded_neg_abs = float((-excluded_amounts[excluded_amounts < 0]).sum())
 
             st.markdown(
                 f"**Excluded totals:** {format_currency(excluded_net)} "
-                f"({format_currency(excluded_pos)} / {format_currency(-excluded_neg)})"
+                f"({format_currency(excluded_pos)} / {format_currency(-excluded_neg_abs)})"
             )
 
             with st.expander("Show excluded rows (audit)", expanded=False):
@@ -106,6 +119,7 @@ def render_dashboard_tab(
                 f"Expense offsets (positive non-income): {format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
