@@ -3,14 +3,12 @@ import streamlit as st
 import pandas as pd
 
 from src.config import APP_TITLE, NAV_ITEMS
-from src.data_loader import load_transactions_and_balances
-
+from src.ingest import load_transactions_and_balances
 from ui.dashboard import render_dashboard_tab
 from ui.transactions import render_transactions_tab
 
-
 # -------------------------------------------------
-# App config (ONE TIME)
+# App configuration
 # -------------------------------------------------
 
 st.set_page_config(
@@ -18,28 +16,29 @@ st.set_page_config(
     layout="wide",
 )
 
-
 # -------------------------------------------------
-# File ingestion (top-level, canonical)
+# File upload (top-level, no sidebar clutter)
 # -------------------------------------------------
 
-st.sidebar.markdown("## Upload Monarch CSVs")
-uploaded_files = st.sidebar.file_uploader(
-    "Transactions + Balances CSVs",
+st.markdown("## Upload Monarch CSVs (Transactions + Balances)")
+
+uploaded_files = st.file_uploader(
+    "Drag and drop Monarch Money CSV exports here",
     type=["csv"],
     accept_multiple_files=True,
-    help="Upload Monarch Money Transactions and Balances exports.",
+    help="Upload both Transactions and Balances CSVs from Monarch Money.",
 )
 
 transactions_df, balances_df = load_transactions_and_balances(uploaded_files)
 
 if transactions_df is None or transactions_df.empty:
-    st.sidebar.info("Upload Monarch CSVs to begin.")
+    st.info("Upload Monarch CSVs to begin.")
     st.stop()
 
+st.success("CSV upload processed. Dashboard refreshed.")
 
 # -------------------------------------------------
-# Derive available years (for tabs)
+# Available years (derived once, canonical)
 # -------------------------------------------------
 
 if "date" in transactions_df.columns:
@@ -56,7 +55,6 @@ else:
 
 available_years = ["ALL YEARS"] + [str(y) for y in years]
 
-
 # -------------------------------------------------
 # Top navigation
 # -------------------------------------------------
@@ -64,20 +62,18 @@ available_years = ["ALL YEARS"] + [str(y) for y in years]
 primary_tabs = st.tabs(NAV_ITEMS)
 tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
 
-
 # -------------------------------------------------
-# Dashboard tab (canonical cash flow + charts)
+# Dashboard tab (canonical)
 # -------------------------------------------------
 
-with tabs_by_label["Dashboard"]:
+with tabs_by_label.get("Dashboard", primary_tabs[0]):
     render_dashboard_tab(
         transactions=transactions_df,
         available_years=available_years,
     )
 
-
 # -------------------------------------------------
-# Transactions tab (table only)
+# Transactions tab (table-only)
 # -------------------------------------------------
 
 with tabs_by_label.get(
@@ -90,9 +86,8 @@ with tabs_by_label.get(
         year_label="ALL YEARS",
     )
 
-
 # -------------------------------------------------
-# Disabled tabs (intentional)
+# Disable other tabs for now (safe guardrail)
 # -------------------------------------------------
 
 for label, tab in tabs_by_label.items():
@@ -102,8 +97,9 @@ for label, tab in tabs_by_label.items():
         st.subheader(label)
         st.info(
             "Temporarily disabled during core rebuild. "
-            "Will be re-enabled after baseline metrics and charts are finalized."
+            "Will be re-enabled after canonical metrics and charts are finalized."
         )
+
 
 
 
