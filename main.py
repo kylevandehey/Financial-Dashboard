@@ -1,64 +1,91 @@
-# main.py
 import streamlit as st
+import pandas as pd
 
-from src.config import APP_TITLE, NAV_ITEMS
-from ui.control_panel import render_control_panel
 from ui.dashboard import render_dashboard_tab
-from ui.transactions import render_transactions_tab
+from src.data_loader import load_transactions_and_balances
 
-st.set_page_config(layout="wide", page_title=APP_TITLE)
 
-# 1) Sidebar ingestion + persistent controls
-control_state = render_control_panel()
+# -----------------------------
+# App setup
+# -----------------------------
 
-canonical_transactions = control_state.transactions
-canonical_accounts = control_state.accounts  # kept for later, not used yet
+st.set_page_config(
+    page_title="Financial Dashboard",
+    layout="wide",
+)
 
-# 2) Top navigation (keep your existing NAV_ITEMS)
-primary_tabs = st.tabs(NAV_ITEMS)
-tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
 
-# 3) Dashboard tab (core rebuild)
-with tabs_by_label.get("Dashboard", primary_tabs[0]):
-    st.subheader("Dashboard (Core Rebuild)")
+# -----------------------------
+# Sidebar: Control Panel (CLEAN)
+# -----------------------------
 
+with st.sidebar:
+    st.markdown("## Control Panel")
+
+    if st.button("Reset Dashboard"):
+        st.session_state.clear()
+        st.rerun()
+
+    st.markdown("### Upload Monarch CSVs (Transactions + Balances)")
+    uploaded_files = st.file_uploader(
+        "Drag and drop files here",
+        type=["csv"],
+        accept_multiple_files=True,
+        help="Upload Monarch Money Transactions and Balances CSV exports.",
+    )
+
+    st.markdown("### Period Selection")
+    period = st.radio(
+        "Period",
+        ["Q1", "Q2", "Q3", "Q4", "ALL YEARS"],
+        index=4,
+    )
+
+    st.markdown("### Status")
+    status_placeholder = st.empty()
+
+
+# -----------------------------
+# Data loading
+# -----------------------------
+
+transactions_df, balances_df = load_transactions_and_balances(uploaded_files)
+
+if transactions_df is None or transactions_df.empty:
+    status_placeholder.info("Upload Monarch CSVs to begin.")
+    st.stop()
+
+status_placeholder.success("CSV upload processed. Dashboard refreshed.")
+
+
+# -----------------------------
+# Available years (tabs)
+# -----------------------------
+
+if "date" in transactions_df.columns:
+    years = (
+        pd.to_datetime(transactions_df["date"], errors="coerce")
+        .dt.year.dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    years = sorted(years, reverse=True)
+else:
     years = []
-    if not canonical_transactions.empty and "year" in canonical_transactions.columns:
-        years = sorted(
-            canonical_transactions["year"].dropna().unique().tolist(),
-            reverse=True,
-        )
 
-    year_labels = ["ALL YEARS"] + [str(y) for y in years]
+available_years = ["ALL YEARS"] + [str(y) for y in years]
 
-    render_dashboard_tab(
-        transactions=canonical_transactions,
-        available_years=year_labels,
-    )
 
-# 4) Transactions tab (table only)
-with tabs_by_label.get(
-    "Transactions",
-    primary_tabs[1] if len(primary_tabs) > 1 else primary_tabs[0],
-):
-    st.subheader("Transactions (Core Rebuild)")
-    render_transactions_tab(
-        canonical_transactions,
-        canonical_accounts,
-        year_label="ALL YEARS",
-        selected_period=control_state.selected_period,
-        date_range=control_state.date_range,
-    )
+# -----------------------------
+# Main content
+# -----------------------------
 
-# 5) Disable everything else for now (tabs remain but show “disabled” message)
-for label, tab in tabs_by_label.items():
-    if label in {"Dashboard", "Transactions"}:
-        continue
-    with tab:
-        st.subheader(label)
-        st.info(
-            "Temporarily disabled during core rebuild. Will be re-enabled after baseline metrics are correct."
-        )
+render_dashboard_tab(
+    transactions=transactions_df,
+    available_years=available_years,
+)
+
 
 
 
