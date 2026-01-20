@@ -7,11 +7,11 @@ from src.formatting import format_currency, format_date_range
 from src.cash_flow import compute_cash_flow, build_exclusion_mask
 
 
-# -----------------------------
+# =====================================================
 # Helpers
-# -----------------------------
+# =====================================================
 
-def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
+def _coerce_df(df: pd.DataFrame | None) -> pd.Dataframe:
     if df is None:
         return pd.DataFrame()
     return pd.DataFrame(df).copy()
@@ -44,7 +44,11 @@ def _monthly_net_cash_frame(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df.copy()
-    df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
+    df["month_start"] = (
+        pd.to_datetime(df["date"])
+        .dt.to_period("M")
+        .dt.to_timestamp()
+    )
 
     rows = []
     for month, group in df.groupby("month_start"):
@@ -65,9 +69,9 @@ def _apply_rolling(df: pd.DataFrame, window: int) -> pd.Series:
     return df["net_cash"].rolling(window=window, min_periods=1).mean()
 
 
-# -----------------------------
-# UI
-# -----------------------------
+# =====================================================
+# Dashboard UI
+# =====================================================
 
 def render_dashboard_tab(
     transactions: pd.DataFrame,
@@ -94,9 +98,9 @@ def render_dashboard_tab(
                 st.info("No transactions in scope.")
                 continue
 
-            # -----------------------------
+            # -------------------------------------------------
             # Canonical Cash Flow
-            # -----------------------------
+            # -------------------------------------------------
             result = compute_cash_flow(scoped_tx)
 
             st.markdown("### Key Metrics (Core Cash Flow)")
@@ -108,9 +112,14 @@ def render_dashboard_tab(
             with c3:
                 st.metric("Net", format_currency(result.net_cash))
 
-            # -----------------------------
-            # Rolling Net Cash Trend
-            # -----------------------------
+            st.caption(
+                f"Included rows: {result.included_rows:,} | "
+                f"Excluded rows: {result.excluded_rows:,}"
+            )
+
+            # -------------------------------------------------
+            # Rolling Net Cash Trend (ADD-ON, not replacement)
+            # -------------------------------------------------
             st.markdown("### Net Cash Trend (Rolling Smoothing)")
 
             monthly = _monthly_net_cash_frame(scoped_tx)
@@ -137,7 +146,9 @@ def render_dashboard_tab(
                     tooltip=[alt.Tooltip("roll_3:Q", title="3-Month Avg")],
                 )
 
-                line_6 = base.mark_line(color="#ff7f0e", strokeDash=[6, 3]).encode(
+                line_6 = base.mark_line(
+                    color="#ff7f0e", strokeDash=[6, 3]
+                ).encode(
                     y=alt.Y("roll_6:Q"),
                     tooltip=[alt.Tooltip("roll_6:Q", title="6-Month Avg")],
                 )
@@ -148,16 +159,16 @@ def render_dashboard_tab(
                 )
 
                 st.caption(
-                    "Interpretation: Rolling averages smooth short-term volatility to reveal "
+                    "Rolling averages smooth short-term volatility to reveal "
                     "underlying cash flow trends."
                 )
 
-            # -----------------------------
-            # Exclusions Audit
-            # -----------------------------
-            mask = build_exclusion_mask(scoped_tx)
+            # -------------------------------------------------
+            # Exclusions Audit (Canonical)
+            # -------------------------------------------------
+            exclusion_mask = build_exclusion_mask(scoped_tx)
             excluded_amounts = (
-                pd.to_numeric(scoped_tx.loc[mask, "amount"], errors="coerce")
+                pd.to_numeric(scoped_tx.loc[exclusion_mask, "amount"], errors="coerce")
                 .fillna(0.0)
             )
 
@@ -166,13 +177,24 @@ def render_dashboard_tab(
             )
 
             with st.expander("Show excluded rows (audit)", expanded=False):
-                cols = [c for c in ["date", "merchant", "category", "amount"] if c in scoped_tx.columns]
-                st.dataframe(scoped_tx.loc[mask, cols], use_container_width=True)
+                cols = [
+                    c for c in ["date", "merchant", "category", "amount"]
+                    if c in scoped_tx.columns
+                ]
+                st.dataframe(
+                    scoped_tx.loc[exclusion_mask, cols],
+                    use_container_width=True,
+                )
 
+            # -------------------------------------------------
+            # Transparency Footer
+            # -------------------------------------------------
             st.caption(
-                f"Expense offsets: {format_currency(result.expense_offsets)} | "
+                f"Expense offsets (positive non-income): "
+                f"{format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
