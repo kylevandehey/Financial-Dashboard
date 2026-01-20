@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import date
 
 from src.formatting import format_currency, format_date_range
@@ -38,12 +39,7 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     return dates.min().date(), dates.max().date()
 
 
-def _monthly_net_cash_series(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Returns a DataFrame with:
-        month_start | net_cash
-    Computed strictly via canonical cash flow.
-    """
+def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "date" not in df.columns:
         return pd.DataFrame()
 
@@ -52,15 +48,27 @@ def _monthly_net_cash_series(df: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     for month, month_df in df.groupby("month_start"):
-        result = compute_cash_flow(month_df)
+        r = compute_cash_flow(month_df)
         rows.append(
             {
                 "month_start": month,
-                "net_cash": result.net_cash,
+                "Income": r.income,
+                "Net Expenses": r.net_expenses,
+                "Net Cash": r.net_cash,
             }
         )
 
-    return pd.DataFrame(rows).sort_values("month_start")
+    wide = pd.DataFrame(rows).sort_values("month_start")
+
+    long = wide.melt(
+        id_vars="month_start",
+        value_vars=["Income", "Net Expenses", "Net Cash"],
+        var_name="metric",
+        value_name="value",
+    )
+
+    long["value_fmt"] = long["value"].apply(format_currency)
+    return long
 
 
 # -----------------------------
@@ -71,7 +79,7 @@ def render_dashboard_tab(
     transactions: pd.DataFrame,
     *,
     available_years: list[str],
-    date_range: tuple[date, date] | None = None,  # intentionally ignored
+    date_range: tuple[date, date] | None = None,
 ) -> None:
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
@@ -109,68 +117,106 @@ def render_dashboard_tab(
 
             st.caption(
                 f"Audit: Included rows = {result.included_rows} | "
-                f"Excluded rows = {result.excluded_rows} | "
-                f"Category-driven exclusions"
+                f"Excluded rows = {result.excluded_rows}"
             )
 
             # -----------------------------
-            # NEW: Monthly Net Cash Trend
+            # Monthly Net Cash Trend (PR #2)
             # -----------------------------
-            monthly = _monthly_net_cash_series(scoped_tx)
+            monthly_long = _monthly_cash_flow_frame(scoped_tx)
 
-            if len(monthly) >= 2:
-                latest = monthly.iloc[-1]
-                prior = monthly.iloc[-2]
-
-                delta = latest["net_cash"] - prior["net_cash"]
-                pct = (
-                    (delta / abs(prior["net_cash"])) * 100
-                    if prior["net_cash"] != 0
-                    else None
+            if not monthly_long.empty:
+                monthly_net = (
+                    monthly_long[monthly_long["metric"] == "Net Cash"]
+                    .sort_values("month_start")
                 )
 
-                st.markdown("### Net Cash Trend (Month-over-Month)")
-
-                t1, t2, t3 = st.columns(3)
-                with t1:
-                    st.metric(
-                        "Latest Month",
-                        format_currency(latest["net_cash"]),
-                    )
-                with t2:
-                    st.metric(
-                        "Prior Month",
-                        format_currency(prior["net_cash"]),
-                    )
-                with t3:
-                    st.metric(
-                        "MoM Change",
-                        format_currency(delta),
-                        f"{pct:.1f}%" if pct is not None else "—",
+                if len(monthly_net) >= 2:
+                    latest = monthly_net.iloc[-1]
+                    prior = monthly_net.iloc[-2]
+                    delta = latest["value"] - prior["value"]
+                    pct = (
+                        (delta / abs(prior["value"])) * 100
+                        if prior["value"] != 0
+                        else None
                     )
 
-            elif len(monthly) == 1:
-                st.markdown("### Net Cash Trend")
-                st.info(
-                    "Only one month of data available. "
-                    "Month-over-month trend will appear once additional data exists."
-                )
+                    st.markdown("### Net Cash Trend (Month-over-Month)")
+
+                    t1, t2, t3 = st.columns(3)
+                    with t1:
+                        st.metric("Latest Month", format_currency(latest["value"]))
+                    with t2:
+                        st.metric("Prior Month", format_currency(prior["value"]))
+                    with t3:
+                        st.metric(
+                            "MoM Change",
+                            format_currency(delta),
+                            f"{pct:.1f}%" if pct is not None else "—",
+                        )
 
             # -----------------------------
-            # Excluded totals (audit)
+            # NEW: Canonical Monthly Charts
+            # -----------------------------
+            if not monthly_long.empty:
+                st.markdown("### Cash Flow Charts (Canonical)")
+
+                show_net = st.toggle(
+                    "Show Net Cash line overlay",
+                    value=True,
+                    key=f"cf_net_toggle_{year_label}",
+                )
+
+                bars = monthly_long[
+                    monthly_long["metric"].isin(["Income", "Net Expenses"])
+                ]
+
+                bar_chart = (
+                    alt.Chart(bars)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("month_start:T", title="Month"),
+                        xOffset="metric:N",
+                        y=alt.Y("value:Q", title="Amount"),
+                        tooltip=[
+                            alt.Tooltip("month_start:T", title="Month"),
+                            alt.Tooltip("metric:N", title="Metric"),
+                            alt.Tooltip("value_fmt:N", title="Amount"),
+                        ],
+                    )
+                    .properties(height=280)
+                )
+
+                if show_net:
+                    net_line = (
+                        alt.Chart(
+                            monthly_long[monthly_long["metric"] == "Net Cash"]
+                        )
+                        .mark_line(point=True)
+                        .encode(
+                            x="month_start:T",
+                            y="value:Q",
+                            tooltip=[
+                                alt.Tooltip("month_start:T", title="Month"),
+                                alt.Tooltip("value_fmt:N", title="Net Cash"),
+                            ],
+                        )
+                    )
+                    st.altair_chart(bar_chart + net_line, use_container_width=True)
+                else:
+                    st.altair_chart(bar_chart, use_container_width=True)
+
+            # -----------------------------
+            # Exclusions Audit
             # -----------------------------
             mask = build_exclusion_mask(scoped_tx)
             excluded_amounts = (
                 pd.to_numeric(scoped_tx.loc[mask, "amount"], errors="coerce")
                 .fillna(0.0)
             )
-            excluded_net = float(excluded_amounts.sum())
-            excluded_pos = float(excluded_amounts[excluded_amounts > 0].sum())
-            excluded_neg_abs = float((-excluded_amounts[excluded_amounts < 0]).sum())
 
             st.markdown(
-                f"**Excluded totals:** {format_currency(excluded_net)} "
-                f"({format_currency(excluded_pos)} / {format_currency(-excluded_neg_abs)})"
+                f"**Excluded totals:** {format_currency(excluded_amounts.sum())}"
             )
 
             with st.expander("Show excluded rows (audit)", expanded=False):
@@ -178,9 +224,10 @@ def render_dashboard_tab(
                 st.dataframe(scoped_tx.loc[mask, cols], use_container_width=True)
 
             st.caption(
-                f"Expense offsets (positive non-income): {format_currency(result.expense_offsets)} | "
+                f"Expense offsets: {format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
