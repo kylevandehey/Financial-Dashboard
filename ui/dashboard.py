@@ -69,29 +69,52 @@ def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
     return long
 
 
-def _category_contribution_frame(df: pd.DataFrame) -> pd.DataFrame:
+def _category_monthly_net_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Net category impact using canonical cash flow rules.
+    Monthly net cash impact per category using canonical cash flow.
     """
     if df.empty or "category" not in df.columns:
         return pd.DataFrame()
 
+    df = df.copy()
+    df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
+
     rows = []
-    for category, cat_df in df.groupby("category"):
-        r = compute_cash_flow(cat_df)
+    for (category, month), group in df.groupby(["category", "month_start"]):
+        r = compute_cash_flow(group)
         rows.append(
             {
                 "category": category or "(Uncategorized)",
-                "Income": r.income,
-                "Expenses": r.net_expenses,
-                "Net Impact": r.net_cash,
+                "month_start": month,
+                "net_cash": r.net_cash,
             }
         )
 
-    result = pd.DataFrame(rows)
-    result = result.sort_values("Net Impact")
-    result["Net Impact (fmt)"] = result["Net Impact"].apply(format_currency)
-    return result
+    return pd.DataFrame(rows)
+
+
+def _category_volatility_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Volatility = standard deviation of monthly net cash per category.
+    """
+    monthly = _category_monthly_net_frame(df)
+    if monthly.empty:
+        return pd.DataFrame()
+
+    agg = (
+        monthly.groupby("category")["net_cash"]
+        .agg(
+            avg_net="mean",
+            volatility="std",
+            months="count",
+        )
+        .reset_index()
+    )
+
+    agg["avg_net_fmt"] = agg["avg_net"].apply(format_currency)
+    agg["volatility_fmt"] = agg["volatility"].fillna(0.0).apply(format_currency)
+
+    return agg.sort_values("volatility", ascending=False)
 
 
 # -----------------------------
@@ -192,39 +215,70 @@ def render_dashboard_tab(
                     st.altair_chart(bar_chart, use_container_width=True)
 
             # -----------------------------
-            # NEW: Category Contribution
+            # Category Contribution
             # -----------------------------
             st.markdown("### Category Contribution (Net Impact)")
 
-            cat_frame = _category_contribution_frame(scoped_tx)
+            contrib = (
+                scoped_tx.groupby("category", dropna=False)
+                .apply(lambda g: compute_cash_flow(g).net_cash)
+                .reset_index(name="net_cash")
+                .sort_values("net_cash")
+            )
+            contrib["net_cash_fmt"] = contrib["net_cash"].apply(format_currency)
 
-            if cat_frame.empty:
-                st.info("No category data available.")
+            if not contrib.empty:
+                chart = (
+                    alt.Chart(contrib)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("category:N", sort=alt.SortField("net_cash")),
+                        x=alt.X("net_cash:Q", title="Net Cash Impact"),
+                        tooltip=[
+                            alt.Tooltip("category:N", title="Category"),
+                            alt.Tooltip("net_cash_fmt:N", title="Net Impact"),
+                        ],
+                    )
+                    .properties(height=350)
+                )
+                st.altair_chart(chart, use_container_width=True)
+
+            # -----------------------------
+            # NEW: Category Volatility
+            # -----------------------------
+            st.markdown("### Category Volatility (Monthly Net)")
+
+            volatility = _category_volatility_frame(scoped_tx)
+
+            if volatility.empty:
+                st.info("Not enough data to compute volatility.")
             else:
-                cat_chart = (
-                    alt.Chart(cat_frame)
+                vol_chart = (
+                    alt.Chart(volatility)
                     .mark_bar()
                     .encode(
                         y=alt.Y(
                             "category:N",
-                            sort=alt.SortField("Net Impact", order="ascending"),
+                            sort=alt.SortField("volatility", order="descending"),
                             title="Category",
                         ),
-                        x=alt.X("Net Impact:Q", title="Net Cash Impact"),
+                        x=alt.X("volatility:Q", title="Volatility (Std Dev)"),
                         tooltip=[
                             alt.Tooltip("category:N", title="Category"),
-                            alt.Tooltip("Net Impact (fmt):N", title="Net Impact"),
+                            alt.Tooltip("volatility_fmt:N", title="Volatility"),
+                            alt.Tooltip("avg_net_fmt:N", title="Avg Monthly Net"),
+                            alt.Tooltip("months:Q", title="Months Observed"),
                         ],
                     )
                     .properties(height=350)
                 )
 
-                st.altair_chart(cat_chart, use_container_width=True)
+                st.altair_chart(vol_chart, use_container_width=True)
 
-                with st.expander("Show category contribution table", expanded=False):
+                with st.expander("Show category volatility table", expanded=False):
                     st.dataframe(
-                        cat_frame[
-                            ["category", "Income", "Expenses", "Net Impact"]
+                        volatility[
+                            ["category", "avg_net", "volatility", "months"]
                         ],
                         use_container_width=True,
                     )
@@ -250,6 +304,7 @@ def render_dashboard_tab(
                 f"Expense offsets: {format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
