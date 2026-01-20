@@ -59,16 +59,39 @@ def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     wide = pd.DataFrame(rows).sort_values("month_start")
-
     long = wide.melt(
         id_vars="month_start",
         value_vars=["Income", "Net Expenses", "Net Cash"],
         var_name="metric",
         value_name="value",
     )
-
     long["value_fmt"] = long["value"].apply(format_currency)
     return long
+
+
+def _category_contribution_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Net category impact using canonical cash flow rules.
+    """
+    if df.empty or "category" not in df.columns:
+        return pd.DataFrame()
+
+    rows = []
+    for category, cat_df in df.groupby("category"):
+        r = compute_cash_flow(cat_df)
+        rows.append(
+            {
+                "category": category or "(Uncategorized)",
+                "Income": r.income,
+                "Expenses": r.net_expenses,
+                "Net Impact": r.net_cash,
+            }
+        )
+
+    result = pd.DataFrame(rows)
+    result = result.sort_values("Net Impact")
+    result["Net Impact (fmt)"] = result["Net Impact"].apply(format_currency)
+    return result
 
 
 # -----------------------------
@@ -115,49 +138,11 @@ def render_dashboard_tab(
             with c3:
                 st.metric("Net", format_currency(result.net_cash))
 
-            st.caption(
-                f"Audit: Included rows = {result.included_rows} | "
-                f"Excluded rows = {result.excluded_rows}"
-            )
-
             # -----------------------------
-            # Monthly Net Cash Trend (PR #2)
+            # Monthly Charts
             # -----------------------------
             monthly_long = _monthly_cash_flow_frame(scoped_tx)
 
-            if not monthly_long.empty:
-                monthly_net = (
-                    monthly_long[monthly_long["metric"] == "Net Cash"]
-                    .sort_values("month_start")
-                )
-
-                if len(monthly_net) >= 2:
-                    latest = monthly_net.iloc[-1]
-                    prior = monthly_net.iloc[-2]
-                    delta = latest["value"] - prior["value"]
-                    pct = (
-                        (delta / abs(prior["value"])) * 100
-                        if prior["value"] != 0
-                        else None
-                    )
-
-                    st.markdown("### Net Cash Trend (Month-over-Month)")
-
-                    t1, t2, t3 = st.columns(3)
-                    with t1:
-                        st.metric("Latest Month", format_currency(latest["value"]))
-                    with t2:
-                        st.metric("Prior Month", format_currency(prior["value"]))
-                    with t3:
-                        st.metric(
-                            "MoM Change",
-                            format_currency(delta),
-                            f"{pct:.1f}%" if pct is not None else "—",
-                        )
-
-            # -----------------------------
-            # NEW: Canonical Monthly Charts
-            # -----------------------------
             if not monthly_long.empty:
                 st.markdown("### Cash Flow Charts (Canonical)")
 
@@ -207,6 +192,44 @@ def render_dashboard_tab(
                     st.altair_chart(bar_chart, use_container_width=True)
 
             # -----------------------------
+            # NEW: Category Contribution
+            # -----------------------------
+            st.markdown("### Category Contribution (Net Impact)")
+
+            cat_frame = _category_contribution_frame(scoped_tx)
+
+            if cat_frame.empty:
+                st.info("No category data available.")
+            else:
+                cat_chart = (
+                    alt.Chart(cat_frame)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y(
+                            "category:N",
+                            sort=alt.SortField("Net Impact", order="ascending"),
+                            title="Category",
+                        ),
+                        x=alt.X("Net Impact:Q", title="Net Cash Impact"),
+                        tooltip=[
+                            alt.Tooltip("category:N", title="Category"),
+                            alt.Tooltip("Net Impact (fmt):N", title="Net Impact"),
+                        ],
+                    )
+                    .properties(height=350)
+                )
+
+                st.altair_chart(cat_chart, use_container_width=True)
+
+                with st.expander("Show category contribution table", expanded=False):
+                    st.dataframe(
+                        cat_frame[
+                            ["category", "Income", "Expenses", "Net Impact"]
+                        ],
+                        use_container_width=True,
+                    )
+
+            # -----------------------------
             # Exclusions Audit
             # -----------------------------
             mask = build_exclusion_mask(scoped_tx)
@@ -227,6 +250,7 @@ def render_dashboard_tab(
                 f"Expense offsets: {format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
+
 
 
 
