@@ -39,7 +39,7 @@ def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
     return dates.min().date(), dates.max().date()
 
 
-def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
+def _monthly_net_cash_frame(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "date" not in df.columns:
         return pd.DataFrame()
 
@@ -47,74 +47,22 @@ def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
     df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
 
     rows = []
-    for month, month_df in df.groupby("month_start"):
-        r = compute_cash_flow(month_df)
-        rows.append(
-            {
-                "month_start": month,
-                "Income": r.income,
-                "Net Expenses": r.net_expenses,
-                "Net Cash": r.net_cash,
-            }
-        )
-
-    wide = pd.DataFrame(rows).sort_values("month_start")
-    long = wide.melt(
-        id_vars="month_start",
-        value_vars=["Income", "Net Expenses", "Net Cash"],
-        var_name="metric",
-        value_name="value",
-    )
-    long["value_fmt"] = long["value"].apply(format_currency)
-    return long
-
-
-def _category_monthly_net_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Monthly net cash impact per category using canonical cash flow.
-    """
-    if df.empty or "category" not in df.columns:
-        return pd.DataFrame()
-
-    df = df.copy()
-    df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
-
-    rows = []
-    for (category, month), group in df.groupby(["category", "month_start"]):
+    for month, group in df.groupby("month_start"):
         r = compute_cash_flow(group)
         rows.append(
             {
-                "category": category or "(Uncategorized)",
                 "month_start": month,
                 "net_cash": r.net_cash,
             }
         )
 
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows).sort_values("month_start")
+    out["net_cash_fmt"] = out["net_cash"].apply(format_currency)
+    return out
 
 
-def _category_volatility_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Volatility = standard deviation of monthly net cash per category.
-    """
-    monthly = _category_monthly_net_frame(df)
-    if monthly.empty:
-        return pd.DataFrame()
-
-    agg = (
-        monthly.groupby("category")["net_cash"]
-        .agg(
-            avg_net="mean",
-            volatility="std",
-            months="count",
-        )
-        .reset_index()
-    )
-
-    agg["avg_net_fmt"] = agg["avg_net"].apply(format_currency)
-    agg["volatility_fmt"] = agg["volatility"].fillna(0.0).apply(format_currency)
-
-    return agg.sort_values("volatility", ascending=False)
+def _apply_rolling(df: pd.DataFrame, window: int) -> pd.Series:
+    return df["net_cash"].rolling(window=window, min_periods=1).mean()
 
 
 # -----------------------------
@@ -152,7 +100,6 @@ def render_dashboard_tab(
             result = compute_cash_flow(scoped_tx)
 
             st.markdown("### Key Metrics (Core Cash Flow)")
-
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.metric("Income", format_currency(result.income))
@@ -162,126 +109,48 @@ def render_dashboard_tab(
                 st.metric("Net", format_currency(result.net_cash))
 
             # -----------------------------
-            # Monthly Charts
+            # Rolling Net Cash Trend
             # -----------------------------
-            monthly_long = _monthly_cash_flow_frame(scoped_tx)
+            st.markdown("### Net Cash Trend (Rolling Smoothing)")
 
-            if not monthly_long.empty:
-                st.markdown("### Cash Flow Charts (Canonical)")
-
-                show_net = st.toggle(
-                    "Show Net Cash line overlay",
-                    value=True,
-                    key=f"cf_net_toggle_{year_label}",
-                )
-
-                bars = monthly_long[
-                    monthly_long["metric"].isin(["Income", "Net Expenses"])
-                ]
-
-                bar_chart = (
-                    alt.Chart(bars)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("month_start:T", title="Month"),
-                        xOffset="metric:N",
-                        y=alt.Y("value:Q", title="Amount"),
-                        tooltip=[
-                            alt.Tooltip("month_start:T", title="Month"),
-                            alt.Tooltip("metric:N", title="Metric"),
-                            alt.Tooltip("value_fmt:N", title="Amount"),
-                        ],
-                    )
-                    .properties(height=280)
-                )
-
-                if show_net:
-                    net_line = (
-                        alt.Chart(
-                            monthly_long[monthly_long["metric"] == "Net Cash"]
-                        )
-                        .mark_line(point=True)
-                        .encode(
-                            x="month_start:T",
-                            y="value:Q",
-                            tooltip=[
-                                alt.Tooltip("month_start:T", title="Month"),
-                                alt.Tooltip("value_fmt:N", title="Net Cash"),
-                            ],
-                        )
-                    )
-                    st.altair_chart(bar_chart + net_line, use_container_width=True)
-                else:
-                    st.altair_chart(bar_chart, use_container_width=True)
-
-            # -----------------------------
-            # Category Contribution
-            # -----------------------------
-            st.markdown("### Category Contribution (Net Impact)")
-
-            contrib = (
-                scoped_tx.groupby("category", dropna=False)
-                .apply(lambda g: compute_cash_flow(g).net_cash)
-                .reset_index(name="net_cash")
-                .sort_values("net_cash")
-            )
-            contrib["net_cash_fmt"] = contrib["net_cash"].apply(format_currency)
-
-            if not contrib.empty:
-                chart = (
-                    alt.Chart(contrib)
-                    .mark_bar()
-                    .encode(
-                        y=alt.Y("category:N", sort=alt.SortField("net_cash")),
-                        x=alt.X("net_cash:Q", title="Net Cash Impact"),
-                        tooltip=[
-                            alt.Tooltip("category:N", title="Category"),
-                            alt.Tooltip("net_cash_fmt:N", title="Net Impact"),
-                        ],
-                    )
-                    .properties(height=350)
-                )
-                st.altair_chart(chart, use_container_width=True)
-
-            # -----------------------------
-            # NEW: Category Volatility
-            # -----------------------------
-            st.markdown("### Category Volatility (Monthly Net)")
-
-            volatility = _category_volatility_frame(scoped_tx)
-
-            if volatility.empty:
-                st.info("Not enough data to compute volatility.")
+            monthly = _monthly_net_cash_frame(scoped_tx)
+            if monthly.empty or len(monthly) < 2:
+                st.info("Not enough monthly data for rolling analysis.")
             else:
-                vol_chart = (
-                    alt.Chart(volatility)
-                    .mark_bar()
-                    .encode(
-                        y=alt.Y(
-                            "category:N",
-                            sort=alt.SortField("volatility", order="descending"),
-                            title="Category",
-                        ),
-                        x=alt.X("volatility:Q", title="Volatility (Std Dev)"),
-                        tooltip=[
-                            alt.Tooltip("category:N", title="Category"),
-                            alt.Tooltip("volatility_fmt:N", title="Volatility"),
-                            alt.Tooltip("avg_net_fmt:N", title="Avg Monthly Net"),
-                            alt.Tooltip("months:Q", title="Months Observed"),
-                        ],
-                    )
-                    .properties(height=350)
+                monthly["roll_3"] = _apply_rolling(monthly, 3)
+                monthly["roll_6"] = _apply_rolling(monthly, 6)
+
+                base = alt.Chart(monthly).encode(
+                    x=alt.X("month_start:T", title="Month")
                 )
 
-                st.altair_chart(vol_chart, use_container_width=True)
+                bars = base.mark_bar(opacity=0.35).encode(
+                    y=alt.Y("net_cash:Q", title="Net Cash"),
+                    tooltip=[
+                        alt.Tooltip("month_start:T", title="Month"),
+                        alt.Tooltip("net_cash_fmt:N", title="Net Cash"),
+                    ],
+                )
 
-                with st.expander("Show category volatility table", expanded=False):
-                    st.dataframe(
-                        volatility[
-                            ["category", "avg_net", "volatility", "months"]
-                        ],
-                        use_container_width=True,
-                    )
+                line_3 = base.mark_line(color="#1f77b4", point=True).encode(
+                    y=alt.Y("roll_3:Q", title="Rolling Avg"),
+                    tooltip=[alt.Tooltip("roll_3:Q", title="3-Month Avg")],
+                )
+
+                line_6 = base.mark_line(color="#ff7f0e", strokeDash=[6, 3]).encode(
+                    y=alt.Y("roll_6:Q"),
+                    tooltip=[alt.Tooltip("roll_6:Q", title="6-Month Avg")],
+                )
+
+                st.altair_chart(
+                    bars + line_3 + line_6,
+                    use_container_width=True,
+                )
+
+                st.caption(
+                    "Interpretation: Rolling averages smooth short-term volatility to reveal "
+                    "underlying cash flow trends."
+                )
 
             # -----------------------------
             # Exclusions Audit
