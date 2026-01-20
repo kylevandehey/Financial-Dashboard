@@ -11,7 +11,7 @@ from src.cash_flow import compute_cash_flow, build_exclusion_mask
 # Helpers
 # =====================================================
 
-def _coerce_df(df: pd.DataFrame | None) -> pd.Dataframe:
+def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
     return pd.DataFrame(df).copy()
@@ -118,7 +118,7 @@ def render_dashboard_tab(
             )
 
             # -------------------------------------------------
-            # Rolling Net Cash Trend (ADD-ON, not replacement)
+            # Rolling Net Cash Trend (Additive)
             # -------------------------------------------------
             st.markdown("### Net Cash Trend (Rolling Smoothing)")
 
@@ -164,7 +164,7 @@ def render_dashboard_tab(
                 )
 
             # -------------------------------------------------
-            # Exclusions Audit (Canonical)
+            # Exclusions Audit
             # -------------------------------------------------
             exclusion_mask = build_exclusion_mask(scoped_tx)
             excluded_amounts = (
@@ -194,18 +194,3 @@ def render_dashboard_tab(
                 f"{format_currency(result.expense_offsets)} | "
                 f"Gross expenses: {format_currency(result.gross_expenses)}"
             )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
