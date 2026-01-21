@@ -1,90 +1,115 @@
-# ui/control_panel.py
+"""
+UI Control Panel (Sidebar)
+
+Purpose
+- Handle CSV uploads (Transactions + Balances)
+- Normalize to canonical DataFrames via src.ingest
+- Persist canonical data in session state for all tabs
+
+Important
+- This module should NOT implement cash flow logic.
+- This module should NOT implement dashboard date presets.
+  (Date preset bar lives in ui/dashboard.py.)
+"""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from datetime import date as date_cls
+
 import streamlit as st
 import pandas as pd
-from dataclasses import dataclass
-from datetime import date, timedelta
+
+from src.ingest import (
+    identify_csv_roles,
+    normalize_transactions,
+    normalize_accounts,
+)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ControlState:
-    start_date: date | None
-    end_date: date | None
-    selected_preset: str
+    transactions: pd.DataFrame
+    accounts: pd.DataFrame
 
 
-def _available_years(df: pd.DataFrame) -> list[int]:
-    if df.empty or "date" not in df.columns:
-        return []
-    years = (
-        pd.to_datetime(df["date"], errors="coerce")
-        .dt.year.dropna()
-        .astype(int)
-        .unique()
-        .tolist()
-    )
-    return sorted(years)
+def _init_state() -> None:
+    if "canonical_transactions" not in st.session_state:
+        st.session_state["canonical_transactions"] = pd.DataFrame()
+    if "canonical_accounts" not in st.session_state:
+        st.session_state["canonical_accounts"] = pd.DataFrame()
+    if "upload_diagnostics" not in st.session_state:
+        st.session_state["upload_diagnostics"] = []
+    if "upload_error" not in st.session_state:
+        st.session_state["upload_error"] = None
 
 
-def render_control_panel(transactions: pd.DataFrame) -> ControlState:
-    st.sidebar.markdown("## 📅 Date Range Presets")
+def render_control_panel() -> ControlState:
+    """
+    Sidebar: upload + ingestion only.
 
-    today = date.today()
+    Returns
+    -------
+    ControlState
+        Canonical transactions + accounts DataFrames from session state.
+    """
+    _init_state()
 
-    years = _available_years(transactions)
-    year_options = [str(y) for y in years]
+    with st.sidebar:
+        st.markdown("## Upload Monarch CSVs")
+        st.caption("Upload both **Transactions** and **Balances/Accounts** CSV exports.")
 
-    preset_options = [
-        "Last 7 Days",
-        "Last 30 Days",
-        "Last 90 Days",
-        "Last 180 Days",
-        "Last Full Year",
-        *year_options,
-        "ALL YEARS",
-        "Custom Range",
-    ]
-
-    preset = st.sidebar.selectbox(
-        "Date Range Presets",
-        preset_options,
-        index=preset_options.index("ALL YEARS") if "ALL YEARS" in preset_options else 0,
-    )
-
-    start_date = None
-    end_date = None
-
-    if preset == "Last 7 Days":
-        start_date = today - timedelta(days=7)
-        end_date = today
-    elif preset == "Last 30 Days":
-        start_date = today - timedelta(days=30)
-        end_date = today
-    elif preset == "Last 90 Days":
-        start_date = today - timedelta(days=90)
-        end_date = today
-    elif preset == "Last 180 Days":
-        start_date = today - timedelta(days=180)
-        end_date = today
-    elif preset == "Last Full Year":
-        start_date = date(today.year - 1, 1, 1)
-        end_date = date(today.year - 1, 12, 31)
-    elif preset.isdigit():
-        year = int(preset)
-        start_date = date(year, 1, 1)
-        end_date = date(year, 12, 31)
-    elif preset == "Custom Range":
-        start_date, end_date = st.sidebar.date_input(
-            "Custom Date Range",
-            value=(today - timedelta(days=30), today),
+        uploaded_files = st.file_uploader(
+            "Upload Transactions + Balances CSVs",
+            type=["csv"],
+            accept_multiple_files=True,
+            help="Upload both Monarch Money Transactions and Balances/Accounts CSV exports.",
+            key="cp_file_uploader",
         )
-    elif preset == "ALL YEARS":
-        start_date = None
-        end_date = None
+
+        if uploaded_files:
+            tx_buf, bal_buf, diagnostics, error_message = identify_csv_roles(uploaded_files)
+
+            st.session_state["upload_diagnostics"] = diagnostics
+            st.session_state["upload_error"] = error_message
+
+            if error_message:
+                st.error(error_message)
+            else:
+                try:
+                    tx_df = normalize_transactions(tx_buf)
+                    bal_df = normalize_accounts(bal_buf)
+                except Exception as exc:
+                    st.session_state["upload_error"] = str(exc)
+                    st.error(f"Upload processing failed: {exc}")
+                else:
+                    st.session_state["canonical_transactions"] = tx_df
+                    st.session_state["canonical_accounts"] = bal_df
+                    st.success("CSV upload processed. Dashboard refreshed.")
+
+        # Optional: diagnostics expander (helpful during rebuild)
+        with st.expander("Upload diagnostics", expanded=False):
+            if st.session_state.get("upload_error"):
+                st.warning("Upload error detected (see above).")
+            diags = st.session_state.get("upload_diagnostics", [])
+            if not diags:
+                st.caption("No diagnostics yet.")
+            else:
+                rows = []
+                for d in diags:
+                    rows.append(
+                        {
+                            "File": d.name,
+                            "Transactions Match": d.transactions_match,
+                            "Balances Match": d.balances_match,
+                            "Tx Missing": ", ".join(d.transactions_missing or []),
+                            "Bal Missing": ", ".join(d.balances_missing or []),
+                        }
+                    )
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     return ControlState(
-        start_date=start_date,
-        end_date=end_date,
-        selected_preset=preset,
+        transactions=st.session_state["canonical_transactions"],
+        accounts=st.session_state["canonical_accounts"],
     )
