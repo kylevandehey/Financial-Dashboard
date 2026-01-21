@@ -1,17 +1,19 @@
 # main.py
 
 import streamlit as st
-import pandas as pd
 
 from src.config import APP_TITLE, NAV_ITEMS
 from ui.control_panel import render_control_panel
 from ui.dashboard import render_dashboard_tab
 from ui.transactions import render_transactions_tab
 
+# -----------------------------
+# App Config
+# -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # -----------------------------
-# Control Panel (Uploads + Date Presets)
+# Control Panel (Uploads + Date Logic)
 # -----------------------------
 control_state = render_control_panel()
 
@@ -23,33 +25,28 @@ if transactions.empty:
     st.stop()
 
 # -----------------------------
-# APPLY DATE FILTER (ONCE)
+# Resolve Date Range (DEFENSIVE)
 # -----------------------------
 filtered_tx = transactions.copy()
 
-if control_state.start_date and control_state.end_date:
+start_date = None
+end_date = None
+
+# Preferred unified interface
+if hasattr(control_state, "date_range") and control_state.date_range:
+    start_date, end_date = control_state.date_range
+
+# Backward compatibility fallback
+elif hasattr(control_state, "start_date") and hasattr(control_state, "end_date"):
+    start_date = control_state.start_date
+    end_date = control_state.end_date
+
+if start_date and end_date:
     mask = (
-        (filtered_tx["date"].dt.date >= control_state.start_date)
-        & (filtered_tx["date"].dt.date <= control_state.end_date)
+        (filtered_tx["date"].dt.date >= start_date)
+        & (filtered_tx["date"].dt.date <= end_date)
     )
     filtered_tx = filtered_tx.loc[mask]
-
-# -----------------------------
-# Available Years (for future use)
-# -----------------------------
-if "date" in transactions.columns:
-    years = (
-        pd.to_datetime(transactions["date"], errors="coerce")
-        .dt.year.dropna()
-        .astype(int)
-        .unique()
-        .tolist()
-    )
-    years = sorted(years, reverse=True)
-else:
-    years = []
-
-available_years = ["ALL YEARS"] + [str(y) for y in years]
 
 # -----------------------------
 # Navigation Tabs
@@ -59,26 +56,27 @@ tabs_by_label = dict(zip(NAV_ITEMS, tabs))
 
 # -----------------------------
 # Dashboard Tab
+# (Date logic already applied)
 # -----------------------------
 with tabs_by_label["📊 Dashboard"]:
     render_dashboard_tab(
         transactions=filtered_tx,
-        available_years=["ALL YEARS"],  # dashboard is date-driven, not year-tab-driven
-        date_range=(control_state.start_date, control_state.end_date),
-        selected_preset=control_state.selected_preset,
+        available_years=["ALL YEARS"],
+        date_range=(start_date, end_date),
+        selected_preset=getattr(control_state, "selected_preset", None),
     )
 
 # -----------------------------
 # Transactions Tab
-# (Year tabs will live here later)
+# (Year tabs live here)
 # -----------------------------
 with tabs_by_label["📋 Transactions"]:
     render_transactions_tab(
         transactions=filtered_tx,
         accounts=accounts,
         year_label="ALL YEARS",
-        selected_period=control_state.selected_preset,
-        date_range=(control_state.start_date, control_state.end_date),
+        selected_period=getattr(control_state, "selected_preset", None),
+        date_range=(start_date, end_date),
     )
 
 # -----------------------------
