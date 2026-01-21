@@ -1,116 +1,78 @@
 # main.py
+
 import streamlit as st
 import pandas as pd
 
 from src.config import APP_TITLE, NAV_ITEMS
 from src.ingest import identify_csv_roles, normalize_transactions, normalize_accounts
-
+from ui.control_panel import render_control_panel
 from ui.dashboard import render_dashboard_tab
 from ui.transactions import render_transactions_tab
 
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+
 # -----------------------------
-# App setup
+# File Upload
 # -----------------------------
-st.set_page_config(
-    page_title=APP_TITLE,
-    layout="wide",
+st.sidebar.markdown("## 📤 Upload Monarch CSVs")
+
+uploaded_files = st.sidebar.file_uploader(
+    "Upload Transactions + Balances CSVs",
+    type=["csv"],
+    accept_multiple_files=True,
 )
 
-# -----------------------------
-# Top navigation
-# -----------------------------
-primary_tabs = st.tabs(NAV_ITEMS)
-tabs_by_label = dict(zip(NAV_ITEMS, primary_tabs))
-
-# -----------------------------
-# File upload (minimal, no dead controls)
-# -----------------------------
-with st.sidebar:
-    st.markdown("## Upload Monarch CSVs")
-    uploaded_files = st.file_uploader(
-        "Upload Transactions + Balances CSVs",
-        type=["csv"],
-        accept_multiple_files=True,
-        help="Upload Monarch Money Transactions and Accounts CSV exports.",
-    )
-
-# -----------------------------
-# Load + normalize data
-# -----------------------------
 if not uploaded_files:
-    with tabs_by_label.get("Dashboard", primary_tabs[0]):
-        st.info("Upload Monarch CSVs to begin.")
+    st.info("Upload Monarch CSV exports to begin.")
     st.stop()
 
-tx_file, bal_file, diagnostics, error_message = identify_csv_roles(uploaded_files)
+tx_file, acct_file, diagnostics, error = identify_csv_roles(uploaded_files)
 
-if error_message:
-    with tabs_by_label.get("Dashboard", primary_tabs[0]):
-        st.error(error_message)
+if error:
+    st.error(error)
     st.stop()
 
-transactions_df = normalize_transactions(tx_file)
-accounts_df = normalize_accounts(bal_file)
+transactions = normalize_transactions(tx_file)
+accounts = normalize_accounts(acct_file)
 
 # -----------------------------
-# Year tabs
+# Controls
 # -----------------------------
-if "date" in transactions_df.columns:
-    years = (
-        pd.to_datetime(transactions_df["date"], errors="coerce")
-        .dt.year.dropna()
-        .astype(int)
-        .unique()
-        .tolist()
+control_state = render_control_panel(transactions)
+
+# Apply date filter ONCE
+filtered_tx = transactions.copy()
+if control_state.start_date and control_state.end_date:
+    mask = (
+        (filtered_tx["date"].dt.date >= control_state.start_date)
+        & (filtered_tx["date"].dt.date <= control_state.end_date)
     )
-    years = sorted(years, reverse=True)
-else:
-    years = []
-
-available_years = ["ALL YEARS"] + [str(y) for y in years]
+    filtered_tx = filtered_tx.loc[mask]
 
 # -----------------------------
-# Dashboard tab
+# Tabs
 # -----------------------------
-with tabs_by_label.get("Dashboard", primary_tabs[0]):
-    st.subheader("Dashboard (Core Rebuild)")
+tabs = st.tabs(NAV_ITEMS)
+tabs_by_label = dict(zip(NAV_ITEMS, tabs))
+
+with tabs_by_label["📊 Dashboard"]:
     render_dashboard_tab(
-        transactions=transactions_df,
-        available_years=available_years,
+        transactions=filtered_tx,
+        available_years=["ALL YEARS"],
     )
 
-# -----------------------------
-# Transactions tab
-# -----------------------------
-with tabs_by_label.get(
-    "Transactions",
-    primary_tabs[1] if len(primary_tabs) > 1 else primary_tabs[0],
-):
-    st.subheader("Transactions (Core Rebuild)")
+with tabs_by_label["📋 Transactions"]:
     render_transactions_tab(
-        transactions_df,
-        accounts_df,
+        filtered_tx,
+        accounts,
         year_label="ALL YEARS",
-        selected_period="ALL YEARS",
-        date_range=None,
+        selected_period=control_state.selected_preset,
+        date_range=(control_state.start_date, control_state.end_date),
     )
 
-# -----------------------------
-# Disabled tabs (future PRs)
-# -----------------------------
+# Disabled tabs (for now)
 for label, tab in tabs_by_label.items():
-    if label in {"Dashboard", "Transactions"}:
+    if label in {"📊 Dashboard", "📋 Transactions"}:
         continue
     with tab:
-        st.subheader(label)
-        st.info(
-            "Temporarily disabled during core rebuild. "
-            "Will be re-enabled after canonical metrics + charts are finalized."
-        )
-
-
-
-
-
-
-
+        st.info("Temporarily disabled during dashboard rebuild.")
