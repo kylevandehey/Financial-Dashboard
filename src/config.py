@@ -2,13 +2,15 @@
 
 APP_TITLE = "Financial Dashboard"
 
-# Ledger-style navigation with icons
+# Navigation tabs (icons already added in PR-2)
 NAV_ITEMS = [
     "📊 Dashboard",
     "📋 Transactions",
     "📈 Insights",
-    "🔎 Compare",
-    "💳 Loan Tracker",
+    "🏦 Loan Tracker",
     "🧰 Tools",
     "🤖 Assistance",
 ]
+
+# Canonical label used across UI for full-dataset views
+ALL_YEARS_LABEL = "ALL YEARS"
