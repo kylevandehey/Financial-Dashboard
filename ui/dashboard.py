@@ -5,267 +5,313 @@ import pandas as pd
 import altair as alt
 from datetime import date, timedelta
 
-from src.cash_flow import compute_cash_flow, build_exclusion_mask
+from src.cash_flow import compute_cash_flow
 from src.formatting import format_currency, format_date_range
 
+
 # =====================================================
-# Date Range Presets (Ledger-Style, Canonical)
+# Constants / Session Keys
 # =====================================================
 
-def _resolve_date_range(tx: pd.DataFrame):
+_SS_PRESET = "dashboard_date_preset"
+_SS_START = "dashboard_start_date"
+_SS_END = "dashboard_end_date"
+
+
+# =====================================================
+# Date Preset Logic (Ledger-Style)
+# =====================================================
+
+def _get_available_years(tx: pd.DataFrame) -> list[str]:
     if tx.empty or "date" not in tx.columns:
-        return tx, None, None
+        return []
 
-    tx = tx.copy()
-    tx["date"] = pd.to_datetime(tx["date"]).dt.date
+    years = (
+        pd.to_datetime(tx["date"], errors="coerce")
+        .dropna()
+        .dt.year
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    return sorted(years, reverse=True)
 
-    min_date = tx["date"].min()
-    max_date = tx["date"].max()
-    today = max_date
 
-    years = sorted(tx["date"].apply(lambda d: d.year).unique(), reverse=True)
+def _resolve_preset(preset: str, tx: pd.DataFrame):
+    today = date.today()
+
+    if preset == "Last 7 Days":
+        return today - timedelta(days=6), today
+    if preset == "Last 30 Days":
+        return today - timedelta(days=29), today
+    if preset == "Last 90 Days":
+        return today - timedelta(days=89), today
+    if preset == "Last 180 Days":
+        return today - timedelta(days=179), today
+    if preset == "Last Full Year":
+        return date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
+
+    # Year selections
+    if preset.isdigit():
+        y = int(preset)
+        return date(y, 1, 1), date(y, 12, 31)
+
+    # ALL YEARS
+    if preset == "ALL YEARS":
+        dates = pd.to_datetime(tx["date"], errors="coerce").dropna()
+        if dates.empty:
+            return None, None
+        return dates.min().date(), dates.max().date()
+
+    return None, None
+
+
+def _render_date_controls(tx: pd.DataFrame):
+    years = _get_available_years(tx)
 
     preset_options = (
-        ["ALL YEARS"]
-        + ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last 180 Days", "Last Full Year"]
+        [
+            "Last 7 Days",
+            "Last 30 Days",
+            "Last 90 Days",
+            "Last 180 Days",
+            "Last Full Year",
+        ]
         + [str(y) for y in years]
-        + ["Custom Range"]
+        + ["ALL YEARS", "Custom Range"]
     )
+
+    if _SS_PRESET not in st.session_state:
+        st.session_state[_SS_PRESET] = "ALL YEARS"
+
+    st.markdown("### Date Range Presets")
 
     preset = st.selectbox(
         "Date Range Presets",
         preset_options,
-        index=0,
-        key="dashboard_date_preset",
+        index=preset_options.index(st.session_state[_SS_PRESET]),
     )
 
-    start_date = None
-    end_date = None
+    st.session_state[_SS_PRESET] = preset
 
-    if preset == "ALL YEARS":
-        start_date, end_date = min_date, max_date
+    if preset == "Custom Range":
+        c1, c2 = st.columns(2)
 
-    elif preset.startswith("Last "):
-        days = int(preset.split()[1])
-        start_date = today - timedelta(days=days)
-        end_date = today
+        with c1:
+            start = st.date_input(
+                "Start Date",
+                value=st.session_state.get(_SS_START),
+                key=_SS_START,
+            )
+        with c2:
+            end = st.date_input(
+                "End Date",
+                value=st.session_state.get(_SS_END),
+                key=_SS_END,
+            )
+    else:
+        start, end = _resolve_preset(preset, tx)
+        st.session_state[_SS_START] = start
+        st.session_state[_SS_END] = end
 
-    elif preset == "Last Full Year":
-        y = today.year - 1
-        start_date = date(y, 1, 1)
-        end_date = date(y, 12, 31)
-
-    elif preset.isdigit():
-        y = int(preset)
-        start_date = date(y, 1, 1)
-        end_date = date(y, 12, 31)
-
-    elif preset == "Custom Range":
-        start_date, end_date = st.date_input(
-            "Custom Date Range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-            key="dashboard_custom_range",
-        )
-
-    if not start_date or not end_date:
-        return tx, None, None
-
-    mask = (tx["date"] >= start_date) & (tx["date"] <= end_date)
-    return tx.loc[mask], start_date, end_date
+    return st.session_state[_SS_START], st.session_state[_SS_END]
 
 
 # =====================================================
-# Helper Frames
+# Filtering
 # =====================================================
 
-def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame()
+def _apply_date_filter(tx: pd.DataFrame, start, end):
+    if tx.empty or not start or not end:
+        return tx
 
-    df = df.copy()
-    df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
-
-    rows = []
-    for m, g in df.groupby("month_start"):
-        r = compute_cash_flow(g)
-        rows.append(
-            {
-                "month_start": m,
-                "Income": r.income,
-                "Net Expenses": r.net_expenses,
-                "Net Cash": r.net_cash,
-            }
-        )
-
-    wide = pd.DataFrame(rows).sort_values("month_start")
-    long = wide.melt(
-        id_vars="month_start",
-        value_vars=["Income", "Net Expenses", "Net Cash"],
-        var_name="metric",
-        value_name="value",
-    )
-    long["value_fmt"] = long["value"].apply(format_currency)
-    return long
+    df = tx.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df.loc[
+        (df["date"].dt.date >= start)
+        & (df["date"].dt.date <= end)
+    ]
 
 
-def _category_volatility_frame(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame()
+# =====================================================
+# Snapshot Helpers
+# =====================================================
 
-    df = df.copy()
-    df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+def _snapshot_metrics(tx: pd.DataFrame):
+    r = compute_cash_flow(tx)
+    return r.income, r.net_expenses, r.net_cash
 
-    rows = []
-    for (cat, month), g in df.groupby(["category", "month"]):
-        rows.append(
-            {
-                "category": cat or "(Uncategorized)",
-                "month": month,
-                "net_cash": compute_cash_flow(g).net_cash,
-            }
-        )
 
-    monthly = pd.DataFrame(rows)
-    agg = (
-        monthly.groupby("category")["net_cash"]
-        .agg(avg_net="mean", volatility="std", months="count")
+def _top_income_categories(tx: pd.DataFrame, excluded: list[str]):
+    df = tx[~tx["category"].isin(excluded)]
+    inc = df[df["amount"] > 0]
+    out = (
+        inc.groupby("category", dropna=False)["amount"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(5)
         .reset_index()
-        .sort_values("volatility", ascending=False)
+    )
+    out["amount_fmt"] = out["amount"].apply(format_currency)
+    return out
+
+
+def _top_expense_categories(tx: pd.DataFrame, excluded: list[str]):
+    df = tx[~tx["category"].isin(excluded)]
+    exp = df[df["amount"] < 0]
+    out = (
+        exp.groupby("category", dropna=False)["amount"]
+        .sum()
+        .sort_values()
+        .head(5)
+        .reset_index()
+    )
+    out["amount_fmt"] = out["amount"].apply(format_currency)
+    return out
+
+
+def _most_frequent_expenses(tx: pd.DataFrame, excluded: list[str]):
+    df = tx[(tx["amount"] < 0) & (~tx["category"].isin(excluded))]
+    agg = (
+        df.groupby("category", dropna=False)["amount"]
+        .agg(
+            occurrences="count",
+            total_spend="sum",
+            avg_spend="mean",
+        )
+        .reset_index()
+        .sort_values("occurrences", ascending=False)
+        .head(5)
     )
 
-    agg["avg_net_fmt"] = agg["avg_net"].apply(format_currency)
-    agg["volatility_fmt"] = agg["volatility"].fillna(0).apply(format_currency)
+    agg["total_fmt"] = agg["total_spend"].apply(format_currency)
+    agg["avg_fmt"] = agg["avg_spend"].apply(format_currency)
     return agg
 
 
 # =====================================================
-# Dashboard Renderer
+# Charts
 # =====================================================
 
-def render_dashboard_tab(transactions: pd.DataFrame) -> None:
+def _bar_chart(df, x, y, title, tooltip):
+    return (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X(x, sort="-y"),
+            y=alt.Y(y),
+            tooltip=tooltip,
+        )
+        .properties(height=280, title=title)
+    )
+
+
+# =====================================================
+# Main Render
+# =====================================================
+
+def render_dashboard_tab(transactions: pd.DataFrame):
     st.markdown("## Dashboard (Core Rebuild)")
     st.markdown("### Dashboard Overview")
 
-    # -----------------------------
-    # Date Controls (Single Source)
-    # -----------------------------
-    filtered_tx, start_date, end_date = _resolve_date_range(transactions)
+    start, end = _render_date_controls(transactions)
 
-    if start_date and end_date:
+    if start and end:
         st.caption("Date Range")
-        st.caption(format_date_range((start_date, end_date)))
+        st.caption(format_date_range((start, end)))
 
-    if filtered_tx.empty:
-        st.info("No transactions in selected date range.")
+    tx = _apply_date_filter(transactions, start, end)
+
+    if tx.empty:
+        st.info("No transactions in selected range.")
         return
 
-    # -----------------------------
-    # Snapshot Metrics
-    # -----------------------------
-    result = compute_cash_flow(filtered_tx)
+    # -------------------------------------------------
+    # Snapshot
+    # -------------------------------------------------
 
-    st.markdown("### Snapshot")
+    income, expenses, net = _snapshot_metrics(tx)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Income", format_currency(result.income))
-    with c2:
-        st.metric("Expenses", format_currency(result.net_expenses))
-    with c3:
-        st.metric("Net Cash Flow", format_currency(result.net_cash))
-
-    # -----------------------------
-    # Snapshot Details
-    # -----------------------------
-    st.markdown("### Snapshot Details")
-
-    income = (
-        filtered_tx[filtered_tx["amount"] > 0]
-        .groupby("merchant")["amount"]
-        .sum()
-        .nlargest(5)
-        .reset_index()
-    )
-
-    expenses = (
-        filtered_tx[filtered_tx["amount"] < 0]
-        .groupby("merchant")["amount"]
-        .sum()
-        .nsmallest(5)
-        .reset_index()
-    )
-
-    freq = (
-        filtered_tx[filtered_tx["amount"] < 0]
-        .groupby("merchant")
-        .size()
-        .nlargest(5)
-        .reset_index(name="count")
-    )
+    st.markdown("## Snapshot")
 
     c1, c2, c3 = st.columns(3)
+    c1.metric("Income", format_currency(income))
+    c2.metric("Expenses", format_currency(expenses))
+    c3.metric("Net Cash Flow", format_currency(net))
 
-    with c1:
-        st.markdown("**Top Income Sources**")
-        st.bar_chart(income.set_index("merchant"))
+    # -------------------------------------------------
+    # Exclusions
+    # -------------------------------------------------
 
-    with c2:
-        st.markdown("**Top Expenses**")
-        st.bar_chart(expenses.set_index("merchant"))
+    st.markdown("## Snapshot Details")
 
-    with c3:
-        st.markdown("**Most Frequent Expenses**")
-        st.bar_chart(freq.set_index("merchant"))
+    all_categories = sorted(tx["category"].dropna().unique().tolist())
 
-    # -----------------------------
-    # Monthly Cash Flow Charts
-    # -----------------------------
-    monthly = _monthly_cash_flow_frame(filtered_tx)
-    if not monthly.empty:
-        st.markdown("### Cash Flow Charts (Canonical)")
-
-        bars = monthly[monthly["metric"].isin(["Income", "Net Expenses"])]
-
-        bar_chart = alt.Chart(bars).mark_bar().encode(
-            x="month_start:T",
-            xOffset="metric:N",
-            y="value:Q",
-            tooltip=["month_start:T", "metric:N", "value_fmt:N"],
-        )
-
-        net_line = alt.Chart(
-            monthly[monthly["metric"] == "Net Cash"]
-        ).mark_line(point=True).encode(
-            x="month_start:T",
-            y="value:Q",
-            tooltip=["month_start:T", "value_fmt:N"],
-        )
-
-        st.altair_chart(bar_chart + net_line, use_container_width=True)
-
-    # -----------------------------
-    # Category Volatility
-    # -----------------------------
-    st.markdown("### Category Volatility")
-
-    vol = _category_volatility_frame(filtered_tx)
-    if not vol.empty:
-        st.bar_chart(vol.set_index("category")[["volatility"]])
-
-    # -----------------------------
-    # Exclusions Audit
-    # -----------------------------
-    mask = build_exclusion_mask(filtered_tx)
-    excluded = filtered_tx.loc[mask]
-
-    st.markdown(f"**Excluded totals:** {format_currency(excluded['amount'].sum())}")
-
-    with st.expander("Show excluded rows (audit)"):
-        st.dataframe(excluded, use_container_width=True)
-
-    st.caption(
-        f"Expense offsets: {format_currency(result.expense_offsets)} | "
-        f"Gross expenses: {format_currency(result.gross_expenses)}"
+    excluded = st.multiselect(
+        "Exclude categories from charts",
+        all_categories,
+        default=[],
     )
+
+    # -------------------------------------------------
+    # Charts
+    # -------------------------------------------------
+
+    i1, i2, i3 = st.columns(3)
+
+    with i1:
+        st.markdown("### Top Income Sources")
+        inc = _top_income_categories(tx, excluded)
+        if not inc.empty:
+            st.altair_chart(
+                _bar_chart(
+                    inc,
+                    "category:N",
+                    "amount:Q",
+                    "Top Income",
+                    [
+                        alt.Tooltip("category:N"),
+                        alt.Tooltip("amount_fmt:N", title="Total"),
+                    ],
+                ),
+                use_container_width=True,
+            )
+
+    with i2:
+        st.markdown("### Top Expenses")
+        exp = _top_expense_categories(tx, excluded)
+        if not exp.empty:
+            st.altair_chart(
+                _bar_chart(
+                    exp,
+                    "category:N",
+                    "amount:Q",
+                    "Top Expenses",
+                    [
+                        alt.Tooltip("category:N"),
+                        alt.Tooltip("amount_fmt:N", title="Total"),
+                    ],
+                ),
+                use_container_width=True,
+            )
+
+    with i3:
+        st.markdown("### Most Frequent Expenses")
+        freq = _most_frequent_expenses(tx, excluded)
+        if not freq.empty:
+            st.altair_chart(
+                _bar_chart(
+                    freq,
+                    "category:N",
+                    "occurrences:Q",
+                    "Frequency",
+                    [
+                        alt.Tooltip("category:N"),
+                        alt.Tooltip("occurrences:Q", title="Count"),
+                        alt.Tooltip("total_fmt:N", title="Total Spend"),
+                        alt.Tooltip("avg_fmt:N", title="Avg Spend"),
+                    ],
+                ),
+                use_container_width=True,
+            )
+
