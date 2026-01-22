@@ -7,61 +7,58 @@ from ui.control_panel import render_control_panel
 from ui.dashboard import render_dashboard_tab
 from ui.transactions import render_transactions_tab
 
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+# -------------------------------------------------
+# App Config
+# -------------------------------------------------
+st.set_page_config(
+    page_title=APP_TITLE,
+    layout="wide",
+)
 
-# -----------------------------
+# -------------------------------------------------
 # Control Panel
-# -----------------------------
+# - Uploads
+# - CSV normalization
+# - NO date logic here
+# -------------------------------------------------
 control_state = render_control_panel()
 
 transactions = control_state.transactions
 accounts = control_state.accounts
-start_date = control_state.start_date
-end_date = control_state.end_date
 
 if transactions.empty:
     st.info("Upload Monarch CSV exports to begin.")
     st.stop()
 
-# -----------------------------
-# Apply Date Filter ONCE
-# -----------------------------
-filtered_tx = transactions.copy()
-
-if start_date and end_date:
-    filtered_tx = filtered_tx[
-        (filtered_tx["date"].dt.date >= start_date)
-        & (filtered_tx["date"].dt.date <= end_date)
-    ]
-
-# -----------------------------
+# -------------------------------------------------
 # Navigation Tabs
-# -----------------------------
+# -------------------------------------------------
 tabs = st.tabs(NAV_ITEMS)
 tabs_by_label = dict(zip(NAV_ITEMS, tabs))
 
-# -----------------------------
-# Dashboard
-# -----------------------------
+# -------------------------------------------------
+# Dashboard Tab
+# - Owns ALL date logic internally
+# -------------------------------------------------
 with tabs_by_label["📊 Dashboard"]:
     render_dashboard_tab(
-        transactions=filtered_tx,
-        start_date=start_date,
-        end_date=end_date,
+        transactions=transactions
     )
 
-# -----------------------------
-# Transactions
-# -----------------------------
+# -------------------------------------------------
+# Transactions Tab
+# - Year tabs live here
+# - Date range will be added later (optional)
+# -------------------------------------------------
 with tabs_by_label["📋 Transactions"]:
     render_transactions_tab(
-        transactions=filtered_tx,
+        transactions=transactions,
         accounts=accounts,
     )
 
-# -----------------------------
-# Disabled Tabs
-# -----------------------------
+# -------------------------------------------------
+# Disabled Tabs (temporary)
+# -------------------------------------------------
 for label, tab in tabs_by_label.items():
     if label in {"📊 Dashboard", "📋 Transactions"}:
         continue
