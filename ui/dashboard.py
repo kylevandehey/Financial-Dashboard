@@ -2,21 +2,17 @@
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import date, timedelta
 
-from src.cash_flow import compute_cash_flow
+from src.cash_flow import compute_cash_flow, build_exclusion_mask
 from src.formatting import format_currency, format_date_range
 
 # =====================================================
-# Date Range Presets (Ledger-Style)
+# Date Range Presets (Ledger-Style, Canonical)
 # =====================================================
 
 def _resolve_date_range(tx: pd.DataFrame):
-    """
-    Unified Ledger-style date range resolver.
-    Returns: (filtered_df, start_date, end_date)
-    """
-
     if tx.empty or "date" not in tx.columns:
         return tx, None, None
 
@@ -40,7 +36,7 @@ def _resolve_date_range(tx: pd.DataFrame):
         "Date Range Presets",
         preset_options,
         index=0,
-        key="date_range_preset",
+        key="dashboard_date_preset",
     )
 
     start_date = None
@@ -55,14 +51,14 @@ def _resolve_date_range(tx: pd.DataFrame):
         end_date = today
 
     elif preset == "Last Full Year":
-        last_year = today.year - 1
-        start_date = date(last_year, 1, 1)
-        end_date = date(last_year, 12, 31)
+        y = today.year - 1
+        start_date = date(y, 1, 1)
+        end_date = date(y, 12, 31)
 
     elif preset.isdigit():
-        year = int(preset)
-        start_date = date(year, 1, 1)
-        end_date = date(year, 12, 31)
+        y = int(preset)
+        start_date = date(y, 1, 1)
+        end_date = date(y, 12, 31)
 
     elif preset == "Custom Range":
         start_date, end_date = st.date_input(
@@ -70,15 +66,78 @@ def _resolve_date_range(tx: pd.DataFrame):
             value=(min_date, max_date),
             min_value=min_date,
             max_value=max_date,
-            key="custom_date_range",
+            key="dashboard_custom_range",
         )
 
-    # Safety: ensure valid tuple
     if not start_date or not end_date:
         return tx, None, None
 
     mask = (tx["date"] >= start_date) & (tx["date"] <= end_date)
     return tx.loc[mask], start_date, end_date
+
+
+# =====================================================
+# Helper Frames
+# =====================================================
+
+def _monthly_cash_flow_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    df["month_start"] = pd.to_datetime(df["date"]).dt.to_period("M").dt.to_timestamp()
+
+    rows = []
+    for m, g in df.groupby("month_start"):
+        r = compute_cash_flow(g)
+        rows.append(
+            {
+                "month_start": m,
+                "Income": r.income,
+                "Net Expenses": r.net_expenses,
+                "Net Cash": r.net_cash,
+            }
+        )
+
+    wide = pd.DataFrame(rows).sort_values("month_start")
+    long = wide.melt(
+        id_vars="month_start",
+        value_vars=["Income", "Net Expenses", "Net Cash"],
+        var_name="metric",
+        value_name="value",
+    )
+    long["value_fmt"] = long["value"].apply(format_currency)
+    return long
+
+
+def _category_volatility_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    df["month"] = pd.to_datetime(df["date"]).dt.to_period("M")
+
+    rows = []
+    for (cat, month), g in df.groupby(["category", "month"]):
+        rows.append(
+            {
+                "category": cat or "(Uncategorized)",
+                "month": month,
+                "net_cash": compute_cash_flow(g).net_cash,
+            }
+        )
+
+    monthly = pd.DataFrame(rows)
+    agg = (
+        monthly.groupby("category")["net_cash"]
+        .agg(avg_net="mean", volatility="std", months="count")
+        .reset_index()
+        .sort_values("volatility", ascending=False)
+    )
+
+    agg["avg_net_fmt"] = agg["avg_net"].apply(format_currency)
+    agg["volatility_fmt"] = agg["volatility"].fillna(0).apply(format_currency)
+    return agg
 
 
 # =====================================================
@@ -90,7 +149,7 @@ def render_dashboard_tab(transactions: pd.DataFrame) -> None:
     st.markdown("### Dashboard Overview")
 
     # -----------------------------
-    # Date Controls (Canonical)
+    # Date Controls (Single Source)
     # -----------------------------
     filtered_tx, start_date, end_date = _resolve_date_range(transactions)
 
@@ -118,12 +177,95 @@ def render_dashboard_tab(transactions: pd.DataFrame) -> None:
         st.metric("Net Cash Flow", format_currency(result.net_cash))
 
     # -----------------------------
-    # Snapshot Details (existing logic continues)
+    # Snapshot Details
     # -----------------------------
-    # IMPORTANT:
-    # All existing snapshot charts, category charts,
-    # rolling smoothing, audits, etc. remain unchanged
-    # below this point in your file.
-    #
-    # This PR ONLY fixes date controls.
+    st.markdown("### Snapshot Details")
+
+    income = (
+        filtered_tx[filtered_tx["amount"] > 0]
+        .groupby("merchant")["amount"]
+        .sum()
+        .nlargest(5)
+        .reset_index()
+    )
+
+    expenses = (
+        filtered_tx[filtered_tx["amount"] < 0]
+        .groupby("merchant")["amount"]
+        .sum()
+        .nsmallest(5)
+        .reset_index()
+    )
+
+    freq = (
+        filtered_tx[filtered_tx["amount"] < 0]
+        .groupby("merchant")
+        .size()
+        .nlargest(5)
+        .reset_index(name="count")
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.markdown("**Top Income Sources**")
+        st.bar_chart(income.set_index("merchant"))
+
+    with c2:
+        st.markdown("**Top Expenses**")
+        st.bar_chart(expenses.set_index("merchant"))
+
+    with c3:
+        st.markdown("**Most Frequent Expenses**")
+        st.bar_chart(freq.set_index("merchant"))
+
     # -----------------------------
+    # Monthly Cash Flow Charts
+    # -----------------------------
+    monthly = _monthly_cash_flow_frame(filtered_tx)
+    if not monthly.empty:
+        st.markdown("### Cash Flow Charts (Canonical)")
+
+        bars = monthly[monthly["metric"].isin(["Income", "Net Expenses"])]
+
+        bar_chart = alt.Chart(bars).mark_bar().encode(
+            x="month_start:T",
+            xOffset="metric:N",
+            y="value:Q",
+            tooltip=["month_start:T", "metric:N", "value_fmt:N"],
+        )
+
+        net_line = alt.Chart(
+            monthly[monthly["metric"] == "Net Cash"]
+        ).mark_line(point=True).encode(
+            x="month_start:T",
+            y="value:Q",
+            tooltip=["month_start:T", "value_fmt:N"],
+        )
+
+        st.altair_chart(bar_chart + net_line, use_container_width=True)
+
+    # -----------------------------
+    # Category Volatility
+    # -----------------------------
+    st.markdown("### Category Volatility")
+
+    vol = _category_volatility_frame(filtered_tx)
+    if not vol.empty:
+        st.bar_chart(vol.set_index("category")[["volatility"]])
+
+    # -----------------------------
+    # Exclusions Audit
+    # -----------------------------
+    mask = build_exclusion_mask(filtered_tx)
+    excluded = filtered_tx.loc[mask]
+
+    st.markdown(f"**Excluded totals:** {format_currency(excluded['amount'].sum())}")
+
+    with st.expander("Show excluded rows (audit)"):
+        st.dataframe(excluded, use_container_width=True)
+
+    st.caption(
+        f"Expense offsets: {format_currency(result.expense_offsets)} | "
+        f"Gross expenses: {format_currency(result.gross_expenses)}"
+    )
