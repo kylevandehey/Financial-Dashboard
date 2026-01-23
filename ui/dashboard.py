@@ -421,13 +421,13 @@ def render_dashboard_tab(
     with s3:
         st.metric("Net Cash Flow", format_currency(result.net_cash))
 
-    # Configure metrics per section (Ledger-style)
+    #  metrics per section (Ledger-style)
     data_sig = _dataset_signature(tx)
     _ensure_section_defaults(df_filtered=filtered_tx, data_sig=data_sig, top_n_default=7)
 
     st.markdown("## Snapshot Details")
 
-    with st.expander("⚙️ Configure metrics per section", expanded=True):
+    with st.expander("⚙️ Configure metrics per section", expanded=False):
         if st.button("Reset to Defaults", key="dash_reset_defaults_v3"):
             _reset_to_defaults(df_filtered=filtered_tx, top_n_default=7)
             st.rerun()
