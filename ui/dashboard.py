@@ -2,576 +2,618 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Iterable
-
-import altair as alt
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import altair as alt
+from datetime import date, datetime, timedelta
 
-from src.cash_flow import build_exclusion_mask, compute_cash_flow
 from src.formatting import format_currency, format_date_range
+from src.cash_flow import compute_cash_flow
 
 
 # -----------------------------
-# Constants (session keys)
+# Session keys (Dashboard)
 # -----------------------------
-_SS_DATE_PRESET = "dash_date_preset_v3"
-_SS_CUSTOM_RANGE = "dash_custom_range_v3"  # tuple(date,date)
-_SS_DATA_SIG = "dash_data_sig_v3"
+_K_PRESET = "dash_date_preset_v3"
+_K_CUSTOM_RANGE = "dash_custom_range_v3"
 
-_SS_INCOME_CATS = "dash_income_categories_v3"
-_SS_EXPENSE_CATS = "dash_expense_categories_v3"
-_SS_FREQ_CATS = "dash_frequency_categories_v3"
+_K_INCOME_SELECTED = "dash_income_selected_v3"
+_K_EXPENSE_SELECTED = "dash_expense_selected_v3"
+_K_FREQ_SELECTED = "dash_freq_selected_v3"
 
 
 # -----------------------------
-# Helpers
+# Data helpers
 # -----------------------------
 def _coerce_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
-    out = pd.DataFrame(df).copy()
-    if "date" in out.columns:
-        out["date"] = pd.to_datetime(out["date"], errors="coerce")
-    if "amount" in out.columns:
-        out["amount"] = pd.to_numeric(out["amount"], errors="coerce").fillna(0.0)
-    if "category" in out.columns:
-        out["category"] = out["category"].fillna("").astype(str).str.strip()
-    return out
+    return pd.DataFrame(df).copy()
 
 
-def _derive_date_range(df: pd.DataFrame) -> tuple[date, date] | None:
+def _ensure_datetime(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if "date" not in df.columns:
+        return df
+    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df
+
+
+def _derive_min_max_dates(df: pd.DataFrame) -> tuple[date, date] | None:
     if df.empty or "date" not in df.columns:
         return None
-    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
-    if dates.empty:
+    d = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if d.empty:
         return None
-    return dates.min().date(), dates.max().date()
+    return d.min().date(), d.max().date()
 
 
-def _dataset_signature(df: pd.DataFrame) -> str:
-    """
-    Lightweight signature to detect "new upload" events without hashing the full dataset.
-    """
-    if df.empty or "date" not in df.columns or "amount" not in df.columns:
-        return "empty"
-    dr = _derive_date_range(df)
-    if not dr:
-        return f"rows={len(df)}"
-    start, end = dr
-    return f"rows={len(df)}|start={start.isoformat()}|end={end.isoformat()}"
-
-
-def _safe_category(value: str) -> str:
-    text = str(value or "").strip()
-    return text if text else "(Uncategorized)"
-
-
-def _available_years(df: pd.DataFrame) -> list[int]:
+def _years_in_df(df: pd.DataFrame) -> list[int]:
     if df.empty or "date" not in df.columns:
         return []
-    years = pd.to_datetime(df["date"], errors="coerce").dt.year.dropna().astype(int).unique().tolist()
-    return sorted(years, reverse=True)
+    d = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if d.empty:
+        return []
+    years = sorted(d.dt.year.unique().tolist(), reverse=True)
+    return [int(y) for y in years if pd.notna(y)]
 
 
-def _apply_date_filter(df: pd.DataFrame, start_date: date | None, end_date: date | None) -> pd.DataFrame:
+def _filter_date_range(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
     if df.empty or "date" not in df.columns:
         return df
-    if not start_date or not end_date:
-        return df
     d = pd.to_datetime(df["date"], errors="coerce")
-    mask = (d.dt.date >= start_date) & (d.dt.date <= end_date)
+    mask = (d.dt.date >= start) & (d.dt.date <= end)
     return df.loc[mask].copy()
 
 
-def _preset_options(df: pd.DataFrame) -> list[str]:
-    years = _available_years(df)
-    year_opts = ["ALL YEARS"] + [str(y) for y in years]
-    # Order requirement: presets, then years, then custom
-    presets = ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last 180 Days", "Last Full Year"]
-    return presets + year_opts + ["Custom Range"]
+def _classify_income_expense(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Prefer canonical flags if present (is_income/is_expense). Fall back to sign-based.
+    """
+    if df.empty or "amount" not in df.columns:
+        return df.iloc[0:0].copy(), df.iloc[0:0].copy()
+
+    if "is_income" in df.columns and "is_expense" in df.columns:
+        income_df = df.loc[df["is_income"] == True].copy()
+        expense_df = df.loc[df["is_expense"] == True].copy()
+        return income_df, expense_df
+
+    # Fallback: sign-based
+    amt = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
+    income_df = df.loc[amt > 0].copy()
+    expense_df = df.loc[amt < 0].copy()
+    return income_df, expense_df
 
 
-def _resolve_preset_to_range(
-    *,
+def _months_observed(df: pd.DataFrame, start: date, end: date) -> int:
+    # Prefer months present in data; fallback to calendar span.
+    if df.empty or "date" not in df.columns:
+        # calendar span
+        span_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+        return max(1, span_months)
+
+    d = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if d.empty:
+        span_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+        return max(1, span_months)
+
+    months = d.dt.to_period("M").nunique()
+    return int(max(1, months))
+
+
+def _safe_pct(num: float, den: float) -> float | None:
+    if den == 0:
+        return None
+    return num / den
+
+
+def _fmt_pct(value: float | None, *, digits: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value*100:.{digits}f}%"
+
+
+def _arrow(delta: float) -> str:
+    if delta > 0:
+        return "▲"
+    if delta < 0:
+        return "▼"
+    return "→"
+
+
+# -----------------------------
+# Date controls (Ledger-style)
+# -----------------------------
+def _build_preset_options(years: list[int]) -> list[str]:
+    options = [
+        "Last 7 Days",
+        "Last 30 Days",
+        "Last 90 Days",
+        "Last 180 Days",
+        "Last Full Year",
+        "ALL YEARS",
+    ]
+    for y in years:
+        options.append(str(y))
+    options.append("Custom Range")
+    return options
+
+
+def _compute_preset_range(
     preset: str,
-    df: pd.DataFrame,
-    today: date | None = None,
-) -> tuple[date | None, date | None]:
-    today = today or datetime.now().date()
-    derived = _derive_date_range(df)
-    if preset == "ALL YEARS":
-        if derived:
-            return derived[0], derived[1]
-        return None, None
-
+    *,
+    min_date: date,
+    max_date: date,
+    years: list[int],
+) -> tuple[date, date]:
+    # All rolling windows anchor off max_date (i.e., latest transaction date)
+    anchor = max_date
     if preset == "Last 7 Days":
-        return today - timedelta(days=6), today
+        return anchor - timedelta(days=6), anchor
     if preset == "Last 30 Days":
-        return today - timedelta(days=29), today
+        return anchor - timedelta(days=29), anchor
     if preset == "Last 90 Days":
-        return today - timedelta(days=89), today
+        return anchor - timedelta(days=89), anchor
     if preset == "Last 180 Days":
-        return today - timedelta(days=179), today
+        return anchor - timedelta(days=179), anchor
     if preset == "Last Full Year":
-        last_year = today.year - 1
-        return date(last_year, 1, 1), date(last_year, 12, 31)
-
+        # previous full calendar year relative to max_date
+        y = anchor.year - 1
+        return date(y, 1, 1), date(y, 12, 31)
+    if preset == "ALL YEARS":
+        return min_date, max_date
     # Year selection
     try:
-        year = int(preset)
-        return date(year, 1, 1), date(year, 12, 31)
+        y = int(preset)
+        if y in years:
+            return date(y, 1, 1), date(y, 12, 31)
     except Exception:
-        return None, None
+        pass
+    # Fallback
+    return min_date, max_date
 
 
-def _infer_income_mask(df: pd.DataFrame) -> pd.Series:
-    if df.empty:
-        return pd.Series([], dtype=bool)
-    if "is_income" in df.columns:
-        return df["is_income"].astype(bool)
-    return df.get("amount", pd.Series(0.0, index=df.index)).astype(float) > 0
-
-
-def _infer_expense_mask(df: pd.DataFrame) -> pd.Series:
-    if df.empty:
-        return pd.Series([], dtype=bool)
-    if "is_expense" in df.columns:
-        return df["is_expense"].astype(bool)
-    return df.get("amount", pd.Series(0.0, index=df.index)).astype(float) < 0
-
-
-def _categories_in_scope(df: pd.DataFrame) -> list[str]:
-    if df.empty or "category" not in df.columns:
-        return []
-    cats = df["category"].fillna("").astype(str).map(_safe_category).unique().tolist()
-    # Stable, readable ordering
-    return sorted(cats, key=lambda x: (x == "(Uncategorized)", x.lower()))
-
-
-def _top_categories_by_amount(
-    df: pd.DataFrame,
-    *,
-    mask: pd.Series,
-    top_n: int,
-    direction: str,
-) -> list[str]:
+def _render_date_controls(tx: pd.DataFrame) -> tuple[pd.DataFrame, date, date, str]:
     """
-    direction:
-      - "income": sum of positive amounts, descending
-      - "expense_abs": abs(sum of negative amounts), descending
+    Returns: filtered_tx, start_date, end_date, preset_label
     """
-    if df.empty or "category" not in df.columns or "amount" not in df.columns:
-        return []
-    work = df.loc[mask, ["category", "amount"]].copy()
-    if work.empty:
-        return []
-    work["category"] = work["category"].map(_safe_category)
-    if direction == "income":
-        grouped = work.groupby("category", dropna=False)["amount"].sum()
-        grouped = grouped.sort_values(ascending=False)
-    else:
-        grouped = work.groupby("category", dropna=False)["amount"].sum().abs()
-        grouped = grouped.sort_values(ascending=False)
-    return grouped.head(top_n).index.tolist()
+    tx = _coerce_df(tx)
+    tx = _ensure_datetime(tx)
 
+    mm = _derive_min_max_dates(tx)
+    if not mm:
+        today = datetime.now().date()
+        return tx, today, today, "ALL YEARS"
 
-def _top_categories_by_frequency(
-    df: pd.DataFrame,
-    *,
-    mask: pd.Series,
-    top_n: int,
-) -> list[str]:
-    if df.empty or "category" not in df.columns:
-        return []
-    work = df.loc[mask, ["category", "amount"]].copy()
-    if work.empty:
-        return []
-    work["category"] = work["category"].map(_safe_category)
-    grouped = work.groupby("category", dropna=False).size().sort_values(ascending=False)
-    return grouped.head(top_n).index.tolist()
+    min_date, max_date = mm
+    years = _years_in_df(tx)
+    options = _build_preset_options(years)
 
+    # Initialize session defaults ONCE (avoid Streamlit warning about default+session set)
+    if _K_PRESET not in st.session_state:
+        st.session_state[_K_PRESET] = "ALL YEARS"
+    if _K_CUSTOM_RANGE not in st.session_state:
+        st.session_state[_K_CUSTOM_RANGE] = (min_date, max_date)
 
-def _ensure_section_defaults(
-    *,
-    df_filtered: pd.DataFrame,
-    data_sig: str,
-    top_n_default: int = 7,
-) -> None:
-    """
-    Initialize (or re-initialize on new upload) the section selections.
-    Persistence rule:
-      - date range changes DO NOT reset selections
-      - new dataset DOES reset selections
-    """
-    if st.session_state.get(_SS_DATA_SIG) != data_sig:
-        st.session_state[_SS_DATA_SIG] = data_sig
-
-        income_mask = _infer_income_mask(df_filtered)
-        expense_mask = _infer_expense_mask(df_filtered)
-
-        st.session_state[_SS_INCOME_CATS] = _top_categories_by_amount(
-            df_filtered, mask=income_mask, top_n=top_n_default, direction="income"
-        )
-        st.session_state[_SS_EXPENSE_CATS] = _top_categories_by_amount(
-            df_filtered, mask=expense_mask, top_n=top_n_default, direction="expense_abs"
-        )
-        st.session_state[_SS_FREQ_CATS] = _top_categories_by_frequency(
-            df_filtered, mask=expense_mask, top_n=top_n_default
-        )
-
-    # Ensure keys exist even if dataset was empty
-    st.session_state.setdefault(_SS_INCOME_CATS, [])
-    st.session_state.setdefault(_SS_EXPENSE_CATS, [])
-    st.session_state.setdefault(_SS_FREQ_CATS, [])
-
-
-def _reset_to_defaults(
-    *,
-    df_filtered: pd.DataFrame,
-    top_n_default: int = 7,
-) -> None:
-    income_mask = _infer_income_mask(df_filtered)
-    expense_mask = _infer_expense_mask(df_filtered)
-
-    st.session_state[_SS_INCOME_CATS] = _top_categories_by_amount(
-        df_filtered, mask=income_mask, top_n=top_n_default, direction="income"
-    )
-    st.session_state[_SS_EXPENSE_CATS] = _top_categories_by_amount(
-        df_filtered, mask=expense_mask, top_n=top_n_default, direction="expense_abs"
-    )
-    st.session_state[_SS_FREQ_CATS] = _top_categories_by_frequency(
-        df_filtered, mask=expense_mask, top_n=top_n_default
-    )
-
-
-def _bar_chart_amount(
-    df: pd.DataFrame,
-    *,
-    title: str,
-    x_field: str,
-    y_field: str,
-    y_title: str,
-    tooltip_fields: list[alt.Tooltip],
-    height: int = 260,
-) -> alt.Chart:
-    base = (
-        alt.Chart(df)
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{x_field}:N", sort="-y", title=None),
-            y=alt.Y(f"{y_field}:Q", title=y_title),
-            tooltip=tooltip_fields,
-        )
-        .properties(title=title, height=height)
-    )
-    return base
-
-
-def _build_income_summary(df: pd.DataFrame, selected_categories: list[str]) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["category", "amount", "amount_fmt"])
-    mask = _infer_income_mask(df)
-    work = df.loc[mask, ["category", "amount"]].copy()
-    if work.empty:
-        return pd.DataFrame(columns=["category", "amount", "amount_fmt"])
-    work["category"] = work["category"].map(_safe_category)
-    if selected_categories:
-        work = work[work["category"].isin(selected_categories)]
-    grouped = work.groupby("category", dropna=False)["amount"].sum().reset_index()
-    grouped["amount_fmt"] = grouped["amount"].apply(format_currency)
-    grouped = grouped.sort_values("amount", ascending=False)
-    return grouped
-
-
-def _build_expense_summary(df: pd.DataFrame, selected_categories: list[str]) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["category", "spend_abs", "spend_abs_fmt"])
-    mask = _infer_expense_mask(df)
-    work = df.loc[mask, ["category", "amount"]].copy()
-    if work.empty:
-        return pd.DataFrame(columns=["category", "spend_abs", "spend_abs_fmt"])
-    work["category"] = work["category"].map(_safe_category)
-    if selected_categories:
-        work = work[work["category"].isin(selected_categories)]
-    grouped = work.groupby("category", dropna=False)["amount"].sum().abs().reset_index()
-    grouped = grouped.rename(columns={"amount": "spend_abs"})
-    grouped["spend_abs_fmt"] = grouped["spend_abs"].apply(format_currency)
-    grouped = grouped.sort_values("spend_abs", ascending=False)
-    return grouped
-
-
-def _build_frequency_summary(df: pd.DataFrame, selected_categories: list[str]) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["category", "occurrences", "total_spend_abs", "total_spend_abs_fmt"])
-    mask = _infer_expense_mask(df)
-    work = df.loc[mask, ["category", "amount"]].copy()
-    if work.empty:
-        return pd.DataFrame(columns=["category", "occurrences", "total_spend_abs", "total_spend_abs_fmt"])
-    work["category"] = work["category"].map(_safe_category)
-    if selected_categories:
-        work = work[work["category"].isin(selected_categories)]
-
-    agg = (
-        work.groupby("category", dropna=False)
-        .agg(
-            occurrences=("amount", "size"),
-            total_spend_abs=("amount", lambda s: float(s.sum().__abs__())),
-        )
-        .reset_index()
-    )
-    agg["total_spend_abs_fmt"] = agg["total_spend_abs"].apply(format_currency)
-    agg = agg.sort_values(["occurrences", "total_spend_abs"], ascending=[False, False])
-    return agg
-
-
-# -----------------------------
-# Date Range Controls (Ledger-style)
-# -----------------------------
-def _render_date_range_controls(tx: pd.DataFrame) -> tuple[pd.DataFrame, date | None, date | None]:
     st.markdown("### Date Range Presets")
-
-    options = _preset_options(tx)
-    current = st.session_state.get(_SS_DATE_PRESET)
-    if current not in options:
-        current = "ALL YEARS" if "ALL YEARS" in options else options[0]
 
     preset = st.selectbox(
         "Date Range Presets",
         options=options,
-        index=options.index(current),
-        key=_SS_DATE_PRESET,
+        index=options.index(st.session_state[_K_PRESET]) if st.session_state[_K_PRESET] in options else options.index("ALL YEARS"),
+        key=_K_PRESET,
         label_visibility="visible",
     )
 
-    start_date: date | None = None
-    end_date: date | None = None
-
-    if preset == "Custom Range":
-        derived = _derive_date_range(tx)
-        default_start = derived[0] if derived else datetime.now().date() - timedelta(days=29)
-        default_end = derived[1] if derived else datetime.now().date()
-
-        prior = st.session_state.get(_SS_CUSTOM_RANGE)
-        if (
-            isinstance(prior, (tuple, list))
-            and len(prior) == 2
-            and isinstance(prior[0], date)
-            and isinstance(prior[1], date)
-        ):
-            default_tuple = (prior[0], prior[1])
-        else:
-            default_tuple = (default_start, default_end)
-
-        st.markdown("#### Custom Date Range")
-        picked = st.date_input(
-            "Choose a date range",
-            value=default_tuple,
-            key=_SS_CUSTOM_RANGE,
+    # If not custom, compute range from preset (but DO NOT overwrite custom selection)
+    if preset != "Custom Range":
+        start_date, end_date = _compute_preset_range(
+            preset, min_date=min_date, max_date=max_date, years=years
         )
-        # Streamlit may return a single date if mis-used; enforce tuple
-        if isinstance(picked, (tuple, list)) and len(picked) == 2 and isinstance(picked[0], date) and isinstance(picked[1], date):
-            start_date, end_date = picked[0], picked[1]
-        else:
-            # Fallback: treat as single date selection
-            one = picked if isinstance(picked, date) else default_start
-            start_date, end_date = one, one
+        # Keep custom range stored but don't force it.
     else:
-        start_date, end_date = _resolve_preset_to_range(preset=preset, df=tx)
+        st.markdown("#### Custom Date Range")
+        # Use a single range picker (Ledger-like behavior)
+        current = st.session_state.get(_K_CUSTOM_RANGE, (min_date, max_date))
+        start_date, end_date = st.date_input(
+            "Choose a date range",
+            value=current,
+            min_value=min_date,
+            max_value=max_date,
+            key="dash_date_range_picker_v3",
+        )
+        # Persist chosen custom range
+        st.session_state[_K_CUSTOM_RANGE] = (start_date, end_date)
 
-    filtered = _apply_date_filter(tx, start_date, end_date)
+    # Normalize / guard
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
 
-    # Display resolved range
-    if start_date and end_date:
-        st.caption("Date Range")
-        st.caption(format_date_range((start_date, end_date)))
+    filtered = _filter_date_range(tx, start_date, end_date)
+    st.caption("Date Range")
+    st.caption(format_date_range((start_date, end_date)))
 
-    return filtered, start_date, end_date
+    return filtered, start_date, end_date, preset
 
 
 # -----------------------------
-# UI
+# Snapshot + Health strip
 # -----------------------------
-def render_dashboard_tab(
-    transactions: pd.DataFrame,
+def _compute_prior_period_range(start_date: date, end_date: date) -> tuple[date, date]:
+    span_days = (end_date - start_date).days + 1
+    prior_end = start_date - timedelta(days=1)
+    prior_start = prior_end - timedelta(days=span_days - 1)
+    return prior_start, prior_end
+
+
+def _render_snapshot_and_health(
+    tx_filtered: pd.DataFrame,
+    tx_all: pd.DataFrame,
+    start_date: date,
+    end_date: date,
 ) -> None:
-    tx = _coerce_df(transactions)
+    result = compute_cash_flow(tx_filtered)
 
-    st.markdown("## Dashboard (Core Rebuild)")
-    st.markdown("### Dashboard Overview")
+    # Prior-period comparison (same length window immediately preceding)
+    prior_start, prior_end = _compute_prior_period_range(start_date, end_date)
+    tx_prior = _filter_date_range(_ensure_datetime(_coerce_df(tx_all)), prior_start, prior_end)
+    prior_result = compute_cash_flow(tx_prior) if not tx_prior.empty else None
 
-    # Date range controls (Ledger-style)
-    filtered_tx, start_date, end_date = _render_date_range_controls(tx)
-
-    if filtered_tx.empty or "amount" not in filtered_tx.columns:
-        st.info("No transactions in scope for the selected date range.")
-        return
-
-    # Snapshot (canonical)
-    result = compute_cash_flow(filtered_tx)
+    net_delta = None
+    net_pct = None
+    if prior_result is not None:
+        net_delta = result.net_cash - prior_result.net_cash
+        net_pct = _safe_pct(net_delta, abs(prior_result.net_cash))  # percent vs prior magnitude
 
     st.markdown("## Snapshot")
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        st.metric("Income", format_currency(result.income))
-    with s2:
-        st.metric("Expenses", format_currency(result.net_expenses))
-    with s3:
-        st.metric("Net Cash Flow", format_currency(result.net_cash))
+    c1, c2, c3 = st.columns(3)
 
-    #  metrics per section (Ledger-style)
-    data_sig = _dataset_signature(tx)
-    _ensure_section_defaults(df_filtered=filtered_tx, data_sig=data_sig, top_n_default=7)
+    with c1:
+        st.metric("Income", format_currency(result.income))
+    with c2:
+        st.metric("Expenses", format_currency(result.net_expenses))
+    with c3:
+        # Use metric delta for quick visual
+        if net_delta is not None:
+            st.metric("Net Cash Flow", format_currency(result.net_cash), delta=format_currency(net_delta))
+            st.caption(f"{_arrow(net_delta)} {_fmt_pct(net_pct)} vs prior period")
+        else:
+            st.metric("Net Cash Flow", format_currency(result.net_cash))
+            st.caption("— vs prior period")
+
+    # -----------------------------
+    # Financial Health Strip
+    # -----------------------------
+    st.markdown("### Financial Health")
+    income = float(result.income or 0.0)
+    expenses = float(result.net_expenses or 0.0)
+    net = float(result.net_cash or 0.0)
+
+    savings_rate = _safe_pct(net, income)
+    expense_ratio = _safe_pct(expenses, income)
+
+    months = _months_observed(tx_filtered, start_date, end_date)
+    avg_monthly_net = net / months if months else net
+    avg_monthly_spend = expenses / months if months else expenses
+
+    # Largest expense category (% of spend)
+    _, expense_df = _classify_income_expense(tx_filtered)
+    largest_exp_pct = None
+    largest_exp_label = "—"
+    if not expense_df.empty and "category" in expense_df.columns and "amount" in expense_df.columns:
+        exp = expense_df.copy()
+        exp["amount"] = pd.to_numeric(exp["amount"], errors="coerce").fillna(0.0)
+        # Spend as positive magnitude
+        exp["spend"] = exp["amount"].abs()
+        by_cat = exp.groupby("category", dropna=False)["spend"].sum().sort_values(ascending=False)
+        total_spend = float(by_cat.sum())
+        if total_spend > 0 and len(by_cat) > 0:
+            largest_exp_label = str(by_cat.index[0] if pd.notna(by_cat.index[0]) else "(Uncategorized)")
+            largest_exp_pct = float(by_cat.iloc[0]) / total_spend
+
+    h1, h2, h3, h4, h5 = st.columns(5)
+    with h1:
+        st.metric("Savings Rate", _fmt_pct(savings_rate))
+    with h2:
+        st.metric("Expense Ratio", _fmt_pct(expense_ratio))
+    with h3:
+        st.metric("Avg Monthly Net", format_currency(avg_monthly_net))
+    with h4:
+        st.metric("Avg Monthly Spend", format_currency(avg_monthly_spend))
+    with h5:
+        st.metric("Largest Expense Share", _fmt_pct(largest_exp_pct))
+        st.caption(largest_exp_label)
+
+
+# -----------------------------
+# Snapshot Details (Configurator + Charts + Tables)
+# -----------------------------
+def _income_totals_by_category(df: pd.DataFrame) -> pd.DataFrame:
+    income_df, _ = _classify_income_expense(df)
+    if income_df.empty or "category" not in income_df.columns or "amount" not in income_df.columns:
+        return pd.DataFrame(columns=["category", "amount"])
+    income_df = income_df.copy()
+    income_df["amount"] = pd.to_numeric(income_df["amount"], errors="coerce").fillna(0.0)
+    agg = (
+        income_df.groupby("category", dropna=False)["amount"]
+        .sum()
+        .reset_index()
+        .sort_values("amount", ascending=False)
+    )
+    agg["category"] = agg["category"].fillna("(Uncategorized)").astype(str)
+    return agg
+
+
+def _expense_totals_by_category(df: pd.DataFrame) -> pd.DataFrame:
+    _, expense_df = _classify_income_expense(df)
+    if expense_df.empty or "category" not in expense_df.columns or "amount" not in expense_df.columns:
+        return pd.DataFrame(columns=["category", "spend"])
+    expense_df = expense_df.copy()
+    expense_df["amount"] = pd.to_numeric(expense_df["amount"], errors="coerce").fillna(0.0)
+    expense_df["spend"] = expense_df["amount"].abs()
+    agg = (
+        expense_df.groupby("category", dropna=False)["spend"]
+        .sum()
+        .reset_index()
+        .sort_values("spend", ascending=False)
+    )
+    agg["category"] = agg["category"].fillna("(Uncategorized)").astype(str)
+    return agg
+
+
+def _expense_frequency_by_category(df: pd.DataFrame) -> pd.DataFrame:
+    _, expense_df = _classify_income_expense(df)
+    if expense_df.empty or "category" not in expense_df.columns or "amount" not in expense_df.columns:
+        return pd.DataFrame(columns=["category", "occurrences", "spend"])
+    expense_df = expense_df.copy()
+    expense_df["amount"] = pd.to_numeric(expense_df["amount"], errors="coerce").fillna(0.0)
+    expense_df["spend"] = expense_df["amount"].abs()
+    agg = (
+        expense_df.groupby("category", dropna=False)
+        .agg(
+            occurrences=("category", "size"),
+            spend=("spend", "sum"),
+        )
+        .reset_index()
+        .sort_values("occurrences", ascending=False)
+    )
+    agg["category"] = agg["category"].fillna("(Uncategorized)").astype(str)
+    return agg
+
+
+def _default_selected_categories(
+    df: pd.DataFrame,
+    *,
+    mode: str,
+    top_n: int = 7,
+) -> list[str]:
+    """
+    mode: "income" | "expense" | "frequency"
+    Defaults are recalculated for the *current date range*.
+    """
+    default_exclude = {"Transfer", "Credit Card Payment"}
+
+    if mode == "income":
+        agg = _income_totals_by_category(df)
+        cats = [c for c in agg["category"].tolist() if c not in default_exclude]
+        return cats[:top_n]
+    if mode == "expense":
+        agg = _expense_totals_by_category(df)
+        cats = [c for c in agg["category"].tolist() if c not in default_exclude]
+        return cats[:top_n]
+    if mode == "frequency":
+        agg = _expense_frequency_by_category(df)
+        cats = [c for c in agg["category"].tolist() if c not in default_exclude]
+        return cats[:top_n]
+    return []
+
+
+def _ensure_config_defaults(df: pd.DataFrame) -> None:
+    if _K_INCOME_SELECTED not in st.session_state:
+        st.session_state[_K_INCOME_SELECTED] = _default_selected_categories(df, mode="income", top_n=7)
+    if _K_EXPENSE_SELECTED not in st.session_state:
+        st.session_state[_K_EXPENSE_SELECTED] = _default_selected_categories(df, mode="expense", top_n=7)
+    if _K_FREQ_SELECTED not in st.session_state:
+        st.session_state[_K_FREQ_SELECTED] = _default_selected_categories(df, mode="frequency", top_n=7)
+
+
+def _render_configurator(df: pd.DataFrame) -> tuple[list[str], list[str], list[str]]:
+    _ensure_config_defaults(df)
+
+    income_options = _income_totals_by_category(df)["category"].tolist()
+    expense_options = _expense_totals_by_category(df)["category"].tolist()
+    freq_options = _expense_frequency_by_category(df)["category"].tolist()
 
     st.markdown("## Snapshot Details")
 
     with st.expander("⚙️ Configure metrics per section", expanded=False):
         if st.button("Reset to Defaults", key="dash_reset_defaults_v3"):
-            _reset_to_defaults(df_filtered=filtered_tx, top_n_default=7)
+            st.session_state[_K_INCOME_SELECTED] = _default_selected_categories(df, mode="income", top_n=7)
+            st.session_state[_K_EXPENSE_SELECTED] = _default_selected_categories(df, mode="expense", top_n=7)
+            st.session_state[_K_FREQ_SELECTED] = _default_selected_categories(df, mode="frequency", top_n=7)
             st.rerun()
 
-        all_categories = _categories_in_scope(filtered_tx)
-
-        # Income categories (income-only)
-        income_mask = _infer_income_mask(filtered_tx)
-        income_categories_in_scope = sorted(
-            set(filtered_tx.loc[income_mask, "category"].map(_safe_category).tolist()),
-            key=lambda x: x.lower(),
-        )
-        income_options = [c for c in all_categories if c in set(income_categories_in_scope)]
-        current_income = [c for c in st.session_state.get(_SS_INCOME_CATS, []) if c in income_options]
-        st.session_state[_SS_INCOME_CATS] = current_income  # sanitize without changing defaults
-        st.multiselect(
+        st.markdown("**Income**")
+        income_selected = st.multiselect(
             "Income",
             options=income_options,
-            default=current_income,
-            key=_SS_INCOME_CATS,
-            help="Top 7 defaults. Remove with ×. Add categories from the dropdown.",
+            default=[c for c in st.session_state[_K_INCOME_SELECTED] if c in income_options],
+            key=_K_INCOME_SELECTED,
+            label_visibility="collapsed",
         )
 
-        # Expense categories (expense-only)
-        expense_mask = _infer_expense_mask(filtered_tx)
-        expense_categories_in_scope = sorted(
-            set(filtered_tx.loc[expense_mask, "category"].map(_safe_category).tolist()),
-            key=lambda x: x.lower(),
-        )
-        expense_options = [c for c in all_categories if c in set(expense_categories_in_scope)]
-        current_expense = [c for c in st.session_state.get(_SS_EXPENSE_CATS, []) if c in expense_options]
-        st.session_state[_SS_EXPENSE_CATS] = current_expense
-        st.multiselect(
+        st.markdown("**Expenses**")
+        expense_selected = st.multiselect(
             "Expenses",
             options=expense_options,
-            default=current_expense,
-            key=_SS_EXPENSE_CATS,
-            help="Top 7 defaults. Remove with ×. Add categories from the dropdown.",
+            default=[c for c in st.session_state[_K_EXPENSE_SELECTED] if c in expense_options],
+            key=_K_EXPENSE_SELECTED,
+            label_visibility="collapsed",
         )
 
-        # Frequency categories (expense-only)
-        current_freq = [c for c in st.session_state.get(_SS_FREQ_CATS, []) if c in expense_options]
-        st.session_state[_SS_FREQ_CATS] = current_freq
-        st.multiselect(
+        st.markdown("**Most Frequent Expenses**")
+        freq_selected = st.multiselect(
             "Most Frequent Expenses",
-            options=expense_options,
-            default=current_freq,
-            key=_SS_FREQ_CATS,
-            help="Top 7 defaults by occurrence. Remove with ×. Add categories from the dropdown.",
+            options=freq_options,
+            default=[c for c in st.session_state[_K_FREQ_SELECTED] if c in freq_options],
+            key=_K_FREQ_SELECTED,
+            label_visibility="collapsed",
         )
 
-    # Build chart frames (category name, formatted values, sorted high->low left->right)
-    income_sel = st.session_state.get(_SS_INCOME_CATS, [])
-    expense_sel = st.session_state.get(_SS_EXPENSE_CATS, [])
-    freq_sel = st.session_state.get(_SS_FREQ_CATS, [])
+    # Pull from session state so charts reflect the latest selections
+    income_selected = st.session_state.get(_K_INCOME_SELECTED, [])
+    expense_selected = st.session_state.get(_K_EXPENSE_SELECTED, [])
+    freq_selected = st.session_state.get(_K_FREQ_SELECTED, [])
 
-    income_df = _build_income_summary(filtered_tx, income_sel)
-    expense_df = _build_expense_summary(filtered_tx, expense_sel)
-    freq_df = _build_frequency_summary(filtered_tx, freq_sel)
+    return income_selected, expense_selected, freq_selected
 
-    # If user removes everything, show guidance
-    if income_df.empty and expense_df.empty and freq_df.empty:
-        st.info("No categories selected. Add categories in 'Configure metrics per section' to render charts.")
+
+def _alt_bar_chart_categories(
+    df: pd.DataFrame,
+    *,
+    x_field: str,
+    y_field: str,
+    title: str,
+    y_title: str,
+    y_format: str | None = None,
+    tooltip_fields: list[alt.Tooltip] | None = None,
+    height: int = 260,
+) -> alt.Chart:
+    base = alt.Chart(df).mark_bar().encode(
+        x=alt.X(f"{x_field}:N", sort=alt.SortField(y_field, order="descending"), title="category"),
+        y=alt.Y(f"{y_field}:Q", title=y_title, axis=alt.Axis(format=y_format) if y_format else alt.Axis()),
+        tooltip=tooltip_fields if tooltip_fields else [],
+    ).properties(height=height, title=title)
+    return base
+
+
+def _render_income_section(df: pd.DataFrame, selected: list[str]) -> None:
+    st.markdown("### Top Income Sources")
+
+    agg = _income_totals_by_category(df)
+    if agg.empty:
+        st.info("No income data in the selected range.")
         return
 
-    c1, c2, c3 = st.columns(3)
+    if selected:
+        agg = agg.loc[agg["category"].isin(selected)].copy()
 
-    with c1:
-        st.markdown("### Top Income Sources")
-        if income_df.empty:
-            st.info("No income categories selected in the current date range.")
-        else:
-            chart = _bar_chart_amount(
-                income_df,
-                title="",
-                x_field="category",
-                y_field="amount",
-                y_title="Income ($)",
-                tooltip_fields=[
-                    alt.Tooltip("category:N", title="Category"),
-                    alt.Tooltip("amount_fmt:N", title="Total Income"),
-                ],
-            )
-            st.altair_chart(chart, use_container_width=True)
+    agg["amount_fmt"] = agg["amount"].apply(format_currency)
 
-    with c2:
-        st.markdown("### Top Expenses")
-        if expense_df.empty:
-            st.info("No expense categories selected in the current date range.")
-        else:
-            chart = _bar_chart_amount(
-                expense_df,
-                title="",
-                x_field="category",
-                y_field="spend_abs",
-                y_title="Spend ($)",
-                tooltip_fields=[
-                    alt.Tooltip("category:N", title="Category"),
-                    alt.Tooltip("spend_abs_fmt:N", title="Total Spend"),
-                ],
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-    with c3:
-        st.markdown("### Most Frequent Expenses")
-        if freq_df.empty:
-            st.info("No frequency categories selected in the current date range.")
-        else:
-            # Sort highest to lowest already; bar uses sort=-y
-            freq_df = freq_df.copy()
-            chart = _bar_chart_amount(
-                freq_df,
-                title="",
-                x_field="category",
-                y_field="occurrences",
-                y_title="Occurrences",
-                tooltip_fields=[
-                    alt.Tooltip("category:N", title="Category"),
-                    alt.Tooltip("occurrences:Q", title="Occurrences"),
-                    alt.Tooltip("total_spend_abs_fmt:N", title="Total Spend"),
-                ],
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-            # Requirement: show total dollar values for frequency
-            with st.expander("Show frequency totals", expanded=False):
-                st.dataframe(
-                    freq_df[["category", "occurrences", "total_spend_abs"]],
-                    use_container_width=True,
-                )
-
-    st.divider()
-
-    # Exclusions audit (kept)
-    mask = build_exclusion_mask(filtered_tx)
-    excluded_amounts = pd.to_numeric(filtered_tx.loc[mask, "amount"], errors="coerce").fillna(0.0)
-
-    st.markdown(f"**Excluded totals:** {format_currency(float(excluded_amounts.sum()))}")
-
-    with st.expander("Show excluded rows (audit)", expanded=False):
-        cols = [c for c in ["date", "merchant", "category", "notes", "amount"] if c in filtered_tx.columns]
-        st.dataframe(filtered_tx.loc[mask, cols], use_container_width=True)
-
-    st.caption(
-        f"Expense offsets: {format_currency(result.expense_offsets)} | "
-        f"Gross expenses: {format_currency(result.gross_expenses)}"
+    chart = _alt_bar_chart_categories(
+        agg,
+        x_field="category",
+        y_field="amount",
+        title="Top Income Sources",
+        y_title="Income ($)",
+        y_format="$,.0f",
+        tooltip_fields=[
+            alt.Tooltip("category:N", title="Category"),
+            alt.Tooltip("amount_fmt:N", title="Total Income"),
+        ],
     )
+    st.altair_chart(chart, use_container_width=True)
+
+    with st.expander("Show income totals", expanded=False):
+        tbl = agg.sort_values("amount", ascending=False)[["category", "amount"]].copy()
+        tbl["amount"] = tbl["amount"].apply(format_currency)
+        tbl = tbl.rename(columns={"category": "Category", "amount": "Total Income"})
+        st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+
+def _render_expense_section(df: pd.DataFrame, selected: list[str]) -> None:
+    st.markdown("### Top Expenses")
+
+    agg = _expense_totals_by_category(df)
+    if agg.empty:
+        st.info("No expense data in the selected range.")
+        return
+
+    if selected:
+        agg = agg.loc[agg["category"].isin(selected)].copy()
+
+    agg["spend_fmt"] = agg["spend"].apply(format_currency)
+
+    chart = _alt_bar_chart_categories(
+        agg,
+        x_field="category",
+        y_field="spend",
+        title="Top Expenses",
+        y_title="Spend ($)",
+        y_format="$,.0f",
+        tooltip_fields=[
+            alt.Tooltip("category:N", title="Category"),
+            alt.Tooltip("spend_fmt:N", title="Total Spend"),
+        ],
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    with st.expander("Show expense totals", expanded=False):
+        tbl = agg.sort_values("spend", ascending=False)[["category", "spend"]].copy()
+        tbl["spend"] = tbl["spend"].apply(format_currency)
+        tbl = tbl.rename(columns={"category": "Category", "spend": "Total Spend"})
+        st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+
+def _render_frequency_section(df: pd.DataFrame, selected: list[str]) -> None:
+    st.markdown("### Most Frequent Expenses")
+
+    agg = _expense_frequency_by_category(df)
+    if agg.empty:
+        st.info("No expense frequency data in the selected range.")
+        return
+
+    if selected:
+        agg = agg.loc[agg["category"].isin(selected)].copy()
+
+    agg["spend_fmt"] = agg["spend"].apply(format_currency)
+
+    chart = alt.Chart(agg).mark_bar().encode(
+        x=alt.X("category:N", sort=alt.SortField("occurrences", order="descending"), title="category"),
+        y=alt.Y("occurrences:Q", title="Occurrences", axis=alt.Axis(format=",.0f")),
+        tooltip=[
+            alt.Tooltip("category:N", title="Category"),
+            alt.Tooltip("occurrences:Q", title="Occurrences", format=","),
+            alt.Tooltip("spend_fmt:N", title="Total Spend"),
+        ],
+    ).properties(height=260, title="Most Frequent Expenses")
+    st.altair_chart(chart, use_container_width=True)
+
+    with st.expander("Show frequency totals", expanded=False):
+        tbl = agg.sort_values("occurrences", ascending=False)[["category", "occurrences", "spend"]].copy()
+        tbl["spend"] = tbl["spend"].apply(format_currency)
+        tbl = tbl.rename(columns={"category": "Category", "occurrences": "Occurrences", "spend": "Total Spend"})
+        st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+
+# -----------------------------
+# Public entry point
+# -----------------------------
+def render_dashboard_tab(transactions: pd.DataFrame) -> None:
+    tx_all = _ensure_datetime(_coerce_df(transactions))
+
+    st.markdown("# Dashboard (Core Rebuild)")
+    st.markdown("## Dashboard Overview")
+
+    if tx_all.empty or "date" not in tx_all.columns or "amount" not in tx_all.columns:
+        st.info("No transactions available. Upload Monarch CSV exports to begin.")
+        return
+
+    # Date controls (Ledger-style) + filtered scope
+    tx_filtered, start_date, end_date, preset_label = _render_date_controls(tx_all)
+
+    # Snapshot + Health strip + trend indicators
+    _render_snapshot_and_health(tx_filtered, tx_all, start_date, end_date)
+
+    # Configurator (collapsed by default) + charts
+    income_selected, expense_selected, freq_selected = _render_configurator(tx_filtered)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _render_income_section(tx_filtered, income_selected)
+    with c2:
+        _render_expense_section(tx_filtered, expense_selected)
+    with c3:
+        _render_frequency_section(tx_filtered, freq_selected)
