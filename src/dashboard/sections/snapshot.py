@@ -1,42 +1,22 @@
-# src/dashboard/sections/snapshot.py
+# src/dashboard/sections/snapshot_summary.py
 
 import streamlit as st
 import pandas as pd
 
-from src.cash_flow import compute_cash_flow
-from src.formatting import format_currency
 
-
-def render_snapshot_section(transactions: pd.DataFrame) -> None:
+def render_snapshot_summary(transactions: pd.DataFrame) -> None:
     """
-    High-level financial snapshot.
-    Respects the active date range (transactions already filtered upstream).
+    Snapshot section wrapper.
+
+    We intentionally do NOT show Income/Expenses/Net metrics here anymore,
+    because those are now owned by the Financial Health strip to avoid
+    duplicate/conflicting summaries.
     """
-
-    if transactions.empty:
-        st.info("No transactions available for this date range.")
-        return
-
-    result = compute_cash_flow(transactions)
-
     st.markdown("## Snapshot")
 
-    c1, c2, c3 = st.columns(3)
+    if transactions is None or transactions.empty:
+        st.info("No transactions in selected date range.")
+        return
 
-    with c1:
-        st.metric(
-            label="Income",
-            value=format_currency(result.income),
-        )
-
-    with c2:
-        st.metric(
-            label="Expenses",
-            value=format_currency(result.net_expenses),
-        )
-
-    with c3:
-        st.metric(
-            label="Net Cash Flow",
-            value=format_currency(result.net_cash),
-        )
+    # Placeholder area (optional): you can add small narrative/notes later
+    st.caption("Overview for the currently selected date range.")
