@@ -4,7 +4,7 @@ import streamlit as st
 
 from src.config import APP_TITLE, NAV_ITEMS
 from ui.control_panel import render_control_panel
-from ui.dashboard import render_dashboard_tab
+from src.dashboard.page import render_dashboard_page
 from ui.transactions import render_transactions_tab
 
 # -------------------------------------------------
@@ -41,9 +41,7 @@ tabs_by_label = dict(zip(NAV_ITEMS, tabs))
 # - Owns ALL date logic internally
 # -------------------------------------------------
 with tabs_by_label["📊 Dashboard"]:
-    render_dashboard_tab(
-        transactions=transactions
-    )
+    render_dashboard_page(transactions=transactions)
 
 # -------------------------------------------------
 # Transactions Tab
