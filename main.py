@@ -2,6 +2,9 @@
 
 import streamlit as st
 
+from src.theme import apply_theme_a
+apply_theme_a()
+
 from src.config import APP_TITLE, NAV_ITEMS
 from ui.control_panel import render_control_panel
 from src.dashboard.page import render_dashboard_page
