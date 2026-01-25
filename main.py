@@ -1,7 +1,9 @@
 # main.py
 
 import streamlit as st
-from src.config import APP_TITLE, NAV_ITEMS
+
+from src.config import APP_TITLE
+from src.theme import apply_theme_a
 
 # --------------------------------------------------
 # App Config (MUST be first Streamlit call)
@@ -9,28 +11,28 @@ from src.config import APP_TITLE, NAV_ITEMS
 st.set_page_config(
     page_title=APP_TITLE,
     layout="wide",
+    initial_sidebar_state="expanded",  # user can still resize/collapse
 )
 
 # --------------------------------------------------
 # Theme (AFTER page config)
 # --------------------------------------------------
-from src.theme import apply_theme_a
 apply_theme_a()
 
 # --------------------------------------------------
-# Page Imports
-# (safe now — no Streamlit calls at import time)
+# Imports (after theme)
 # --------------------------------------------------
 from ui.control_panel import render_control_panel
 from src.dashboard.page import render_dashboard_page
 from ui.transactions import render_transactions_tab
+from src.nav import render_left_nav
 
-# --------------------------------------------------
-# Control Panel
-# - Uploads
-# - CSV normalization
-# - NO date logic here
-# --------------------------------------------------
+# -------------------------------------------------
+# Sidebar: Navigation + Uploads
+# -------------------------------------------------
+active_page = render_left_nav()
+
+st.sidebar.markdown("### 📤 Upload Monarch CSVs")
 control_state = render_control_panel()
 
 transactions = control_state.transactions
@@ -40,35 +42,25 @@ if transactions.empty:
     st.info("Upload Monarch CSV exports to begin.")
     st.stop()
 
-# --------------------------------------------------
-# Navigation Tabs
-# --------------------------------------------------
-tabs = st.tabs(NAV_ITEMS)
-tabs_by_label = dict(zip(NAV_ITEMS, tabs))
-
-# --------------------------------------------------
-# Dashboard Tab
-# - Owns ALL date logic internally
-# --------------------------------------------------
-with tabs_by_label["📊 Dashboard"]:
+# -------------------------------------------------
+# Main Content Routing
+# -------------------------------------------------
+if active_page == "dashboard":
     render_dashboard_page(transactions=transactions)
 
-# --------------------------------------------------
-# Transactions Tab
-# - Year tabs live here
-# - Date range may be added later
-# --------------------------------------------------
-with tabs_by_label["📋 Transactions"]:
+elif active_page == "transactions":
     render_transactions_tab(
         transactions=transactions,
         accounts=accounts,
     )
 
-# --------------------------------------------------
-# Disabled Tabs (temporary)
-# --------------------------------------------------
-for label, tab in tabs_by_label.items():
-    if label in {"📊 Dashboard", "📋 Transactions"}:
-        continue
-    with tab:
-        st.info("Temporarily disabled during dashboard rebuild.")
+else:
+    # Placeholder pages (until implemented)
+    page_titles = {
+        "insights": "🧠 Insights",
+        "loan_tracker": "🏠 Loan Tracker",
+        "tools": "🛠️ Tools",
+        "assistance": "💬 Assistance",
+    }
+    st.markdown(f"# {page_titles.get(active_page,'📄 Page')}")
+    st.info("Temporarily disabled during dashboard rebuild.")
