@@ -2,10 +2,25 @@
 
 import streamlit as st
 
+from src.config import APP_TITLE, NAV_ITEMS
+
+# --------------------------------------------------
+# App Config (MUST be first Streamlit call)
+# --------------------------------------------------
+st.set_page_config(
+    page_title=APP_TITLE,
+    layout="wide",
+)
+
+# --------------------------------------------------
+# Theme (AFTER page config)
+# --------------------------------------------------
 from src.theme import apply_theme_a
 apply_theme_a()
 
-from src.config import APP_TITLE, NAV_ITEMS
+# --------------------------------------------------
+# Page Imports
+# --------------------------------------------------
 from ui.control_panel import render_control_panel
 from src.dashboard.page import render_dashboard_page
 from ui.transactions import render_transactions_tab
