@@ -26,6 +26,7 @@ from ui.control_panel import render_control_panel
 from src.dashboard import render_dashboard_page
 from ui.transactions import render_transactions_tab
 from src.nav import render_left_nav
+from src.transactions.page import render_transactions_page
 
 # -------------------------------------------------
 # Sidebar: Navigation + Uploads
@@ -53,6 +54,9 @@ elif active_page == "transactions":
         transactions=transactions,
         accounts=accounts,
     )
+elif selected_page=="Transactions":
+    render_transactions_page(transactions)
+
 
 else:
     # Placeholder pages (until implemented)
