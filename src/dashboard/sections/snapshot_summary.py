@@ -12,5 +12,5 @@ def render_snapshot_summary(filtered_tx: pd.DataFrame) -> None:
         st.info("No transactions in selected date range.")
         return
 
-    st.markdown("## Snapshot Details")
+   st.markdown("### Summary")
     st.caption("Additional breakdowns will live here.")
