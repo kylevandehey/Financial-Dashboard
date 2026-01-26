@@ -23,7 +23,7 @@ apply_theme_a()
 # Imports (after theme)
 # --------------------------------------------------
 from ui.control_panel import render_control_panel
-from src.dashboard.page import render_dashboard_page
+from src.dashboard import render_dashboard_page
 from ui.transactions import render_transactions_tab
 from src.nav import render_left_nav
 
