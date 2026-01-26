@@ -53,7 +53,14 @@ def _most_frequent(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def render_charts_section(transactions: pd.DataFrame) -> None:
+def render_charts(filtered_tx: pd.DataFrame) -> None:
+    """
+    Snapshot charts section.
+    """
+    if filtered_tx is None or filtered_tx.empty:
+        st.info("No transactions available for charts.")
+        return
+
     st.markdown("## Snapshot Details")
 
     # -------------------------------------------------
@@ -72,23 +79,25 @@ def render_charts_section(transactions: pd.DataFrame) -> None:
             st.session_state.exclude_expense = DEFAULT_EXCLUSIONS.copy()
             st.session_state.exclude_frequency = DEFAULT_EXCLUSIONS.copy()
 
+        categories = sorted(filtered_tx["category"].dropna().unique())
+
         st.multiselect(
             "Income",
-            options=sorted(transactions["category"].unique()),
+            options=categories,
             default=st.session_state.exclude_income,
             key="exclude_income",
         )
 
         st.multiselect(
             "Expenses",
-            options=sorted(transactions["category"].unique()),
+            options=categories,
             default=st.session_state.exclude_expense,
             key="exclude_expense",
         )
 
         st.multiselect(
             "Most Frequent Expenses",
-            options=sorted(transactions["category"].unique()),
+            options=categories,
             default=st.session_state.exclude_frequency,
             key="exclude_frequency",
         )
@@ -99,15 +108,15 @@ def render_charts_section(transactions: pd.DataFrame) -> None:
     # Prepare Data
     # -------------------------------------------------
     income_df = _top_income(
-        _filter_exclusions(transactions, st.session_state.exclude_income)
+        _filter_exclusions(filtered_tx, st.session_state.exclude_income)
     )
 
     expense_df = _top_expenses(
-        _filter_exclusions(transactions, st.session_state.exclude_expense)
+        _filter_exclusions(filtered_tx, st.session_state.exclude_expense)
     )
 
     freq_df = _most_frequent(
-        _filter_exclusions(transactions, st.session_state.exclude_frequency)
+        _filter_exclusions(filtered_tx, st.session_state.exclude_frequency)
     )
 
     # -------------------------------------------------
