@@ -3,19 +3,32 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from typing import Optional, Tuple
 
 
-def render_date_controls(transactions: pd.DataFrame):
+def render_date_controls(
+    transactions: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Optional[date], Optional[date], str]:
     """
     Ledger-style date range preset selector.
-    Returns: filtered_df, start_date, end_date
+
+    Always returns:
+        filtered_tx, start_date, end_date, selected_label
     """
 
-    if transactions.empty:
-        return transactions, None, None
+    if transactions is None or transactions.empty:
+        return transactions, None, None, "NO_DATA"
 
-    min_date = transactions["date"].min().date()
-    max_date = transactions["date"].max().date()
+    # Ensure datetime
+    tx = transactions.copy()
+    tx["date"] = pd.to_datetime(tx["date"], errors="coerce")
+    tx = tx.dropna(subset=["date"])
+
+    if tx.empty:
+        return transactions, None, None, "NO_VALID_DATES"
+
+    min_date = tx["date"].min().date()
+    max_date = tx["date"].max().date()
 
     PRESETS = {
         "ALL_YEARS": (min_date, max_date),
@@ -25,7 +38,7 @@ def render_date_controls(transactions: pd.DataFrame):
         "Last 180 Days": (max_date - pd.Timedelta(days=179), max_date),
     }
 
-    years = sorted(transactions["date"].dt.year.unique())
+    years = sorted(tx["date"].dt.year.unique())
     for y in years:
         PRESETS[str(y)] = (date(y, 1, 1), date(y, 12, 31))
 
@@ -34,24 +47,30 @@ def render_date_controls(transactions: pd.DataFrame):
     if "dash_date_preset_v2" not in st.session_state:
         st.session_state.dash_date_preset_v2 = "ALL_YEARS"
 
-    preset = st.selectbox(
+    selected_label = st.selectbox(
         "Date Range Presets",
         options=list(PRESETS.keys()),
         key="dash_date_preset_v2",
     )
 
-    if preset == "Custom Range":
+    if selected_label == "Custom Range":
         c1, c2 = st.columns(2)
-        start = c1.date_input("Start date", min_date)
-        end = c2.date_input("End date", max_date)
+        start_date = c1.date_input("Start date", min_date)
+        end_date = c2.date_input("End date", max_date)
     else:
-        start, end = PRESETS[preset]
+        start_date, end_date = PRESETS[selected_label]
 
-    st.caption(f"Viewing: {start} → {end}")
+    # Defensive guard
+    if start_date is None or end_date is None:
+        return transactions, None, None, selected_label
+
+    st.caption(f"Viewing: {start_date} → {end_date}")
 
     mask = (
-        (transactions["date"].dt.date >= start)
-        & (transactions["date"].dt.date <= end)
+        (tx["date"].dt.date >= start_date)
+        & (tx["date"].dt.date <= end_date)
     )
 
-    return transactions.loc[mask], start, end
+    filtered_tx = tx.loc[mask].copy()
+
+    return filtered_tx, start_date, end_date, selected_label
