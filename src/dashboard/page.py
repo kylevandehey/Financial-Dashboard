@@ -11,7 +11,6 @@ from .date_controls import render_date_controls
 from .sections.health_strip import render_health_strip
 from .sections.snapshot import render_snapshot
 from .sections.snapshot_summary import render_snapshot_summary
-from .sections.charts import render_charts
 
 
 def render_dashboard_page(transactions: pd.DataFrame) -> None:
@@ -71,8 +70,3 @@ def render_dashboard_page(transactions: pd.DataFrame) -> None:
     st.markdown("## Snapshot Details")
 
     render_snapshot_summary(filtered_tx=filtered_tx)
-
-    # -------------------------------------------------
-    # Charts
-    # -------------------------------------------------
-    render_charts(filtered_tx=filtered_tx)
