@@ -1,94 +1,75 @@
 # src/dashboard/page.py
 
 import streamlit as st
+import pandas as pd
 
-# Controls
-from src.dashboard.date_controls import render_date_controls
+from src.formatting import format_date_range
+from src.cash_flow import compute_cash_flow
 
-# Sections
-from src.dashboard.sections.health_strip import render_health_strip
-from src.dashboard.sections.snapshot_summary import render_snapshot_summary
-from src.dashboard.sections.income_chart import render_income_chart
-from src.dashboard.sections.expense_chart import render_expense_chart
-from src.dashboard.sections.frequency_chart import render_frequency_chart
+from .date_controls import render_date_controls
+from .sections import (
+render_health_strip,
+render_snapshot,
+render_snapshot_summary,
+render_charts,
+)
 
 
-def render_dashboard_page(transactions):
-    """
-    Primary dashboard page orchestrator.
-    All heavy logic is delegated to section modules.
-    """
-
+def render_dashboard_page(transactions: pd.DataFrame) -> None:
     st.markdown("# Dashboard (Core Rebuild)")
     st.markdown("## Dashboard Overview")
 
-    # -------------------------------------------------
-    # Date Controls (single source of truth)
-    # -------------------------------------------------
-    filtered_tx, start_date, end_date = render_date_controls(transactions)
-
-    if filtered_tx.empty:
-        st.info("No transactions in selected date range.")
+    if transactions is None or transactions.empty:
+        st.info("No transactions available. Upload Monarch CSV exports to begin.")
         return
 
-    # -------------------------------------------------
-    # Health Strip (High-level financial indicators)
-    # -------------------------------------------------
-    render_health_strip(filtered_tx)
+    # -----------------------------
+    # Date Range Controls (Single Source of Truth)
+    # -----------------------------
+    filtered_tx,start_date,end_date,selected_label=render_date_controls(transactions)
 
-    # -------------------------------------------------
-    # Snapshot Summary
-    # -------------------------------------------------
-    render_snapshot_summary(filtered_tx)
+    # Defensive fallback (should not happen, but avoids blank-page failures)
+    if filtered_tx is None:
+        filtered_tx=transactions.copy()
 
-    # -------------------------------------------------
-    # Snapshot Details (Configurable Sections)
-    # -------------------------------------------------
+    # Date Range display
+    if start_date and end_date:
+        st.caption(f"Viewing: {format_date_range((start_date,end_date))}")
+    elif "date" in filtered_tx.columns:
+        # If controls didn’t return dates for some reason, derive best-effort range
+        try:
+            d=pd.to_datetime(filtered_tx["date"],errors="coerce").dropna()
+            if not d.empty:
+                st.caption(f"Viewing: {format_date_range((d.min().date(),d.max().date()))}")
+        except Exception:
+            pass
+
+    # -----------------------------
+    # Canonical Cash Flow (ONE calculation, reused everywhere)
+    # -----------------------------
+    cash_flow=compute_cash_flow(filtered_tx)
+
+    # -----------------------------
+    # Financial Health Strip
+    # -----------------------------
+    render_health_strip(
+        cash_flow=cash_flow,
+        start_date=start_date,
+        end_date=end_date,
+        selected_label=selected_label,
+    )
+
+    st.divider()
+
+    # -----------------------------
+    # Snapshot (If you want this removed later, we remove it here centrally)
+    # -----------------------------
+    render_snapshot(cash_flow=cash_flow)
+
     st.markdown("## Snapshot Details")
 
-    with st.expander("⚙️ Configure metrics per section", expanded=False):
-        col1, col2, col3 = st.columns(3)
+    # If your snapshot_summary needs tx for charts/tables, pass filtered_tx too
+    render_snapshot_summary(filtered_tx=filtered_tx)
 
-        with col1:
-            income_exclusions = st.multiselect(
-                "Income",
-                options=sorted(filtered_tx["category"].dropna().unique()),
-                default=[],
-                key="income_exclusions",
-            )
-
-        with col2:
-            expense_exclusions = st.multiselect(
-                "Expenses",
-                options=sorted(filtered_tx["category"].dropna().unique()),
-                default=[],
-                key="expense_exclusions",
-            )
-
-        with col3:
-            frequency_exclusions = st.multiselect(
-                "Most Frequent Expenses",
-                options=sorted(filtered_tx["category"].dropna().unique()),
-                default=[],
-                key="frequency_exclusions",
-            )
-
-        if st.button("Reset to Defaults"):
-            st.session_state.pop("income_exclusions", None)
-            st.session_state.pop("expense_exclusions", None)
-            st.session_state.pop("frequency_exclusions", None)
-            st.rerun()
-
-    # -------------------------------------------------
-    # Charts
-    # -------------------------------------------------
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        render_income_chart(filtered_tx, income_exclusions)
-
-    with c2:
-        render_expense_chart(filtered_tx, expense_exclusions)
-
-    with c3:
-        render_frequency_chart(filtered_tx, frequency_exclusions)
+    # Charts section (Top Income / Top Expenses / Frequency)
+    render_charts(filtered_tx=filtered_tx)
