@@ -1,23 +1,16 @@
+# src/dashboard/sections/snapshot_summary.py
+
 import streamlit as st
-from src.cash_flow import compute_cash_flow
-from src.formatting import format_currency
+import pandas as pd
 
 
-def render_snapshot_summary(transactions):
-    if transactions.empty:
+def render_snapshot_summary(filtered_tx: pd.DataFrame) -> None:
+    """
+    Snapshot details section.
+    """
+    if filtered_tx is None or filtered_tx.empty:
+        st.info("No transactions in selected date range.")
         return
 
-    result = compute_cash_flow(transactions)
-
-    st.markdown("## Snapshot")
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.metric("Income", format_currency(result.income))
-
-    with c2:
-        st.metric("Expenses", format_currency(result.net_expenses))
-
-    with c3:
-        st.metric("Net Cash Flow", format_currency(result.net_cash))
+    st.markdown("## Snapshot Details")
+    st.caption("Additional breakdowns will live here.")
