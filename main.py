@@ -24,7 +24,6 @@ apply_theme_a()
 # --------------------------------------------------
 from ui.control_panel import render_control_panel
 from src.dashboard import render_dashboard_page
-from ui.transactions import render_transactions_tab
 from src.nav import render_left_nav
 from src.transactions.page import render_transactions_page
 
@@ -46,25 +45,25 @@ if transactions.empty:
 # -------------------------------------------------
 # Main Content Routing
 # -------------------------------------------------
+
 if active_page == "dashboard":
     render_dashboard_page(transactions=transactions)
 
 elif active_page == "transactions":
-    render_transactions_tab(
-        transactions=transactions,
-        accounts=accounts,
-    )
-elif selected_page=="Transactions":
     render_transactions_page(transactions)
 
+elif active_page == "insights":
+    st.markdown("# 💡 Insights")
+    st.info("Insights coming next.")
 
-else:
-    # Placeholder pages (until implemented)
-    page_titles = {
-        "insights": "🧠 Insights",
-        "loan_tracker": "🏠 Loan Tracker",
-        "tools": "🛠️ Tools",
-        "assistance": "💬 Assistance",
-    }
-    st.markdown(f"# {page_titles.get(active_page,'📄 Page')}")
-    st.info("Temporarily disabled during dashboard rebuild.")
+elif active_page == "loan_tracker":
+    st.markdown("# 🏠 Loan Tracker")
+    st.info("Loan Tracker coming soon.")
+
+elif active_page == "tools":
+    st.markdown("# 🛠 Tools")
+    st.info("Tools coming soon.")
+
+elif active_page == "assistance":
+    st.markdown("# 💬 Assistance")
+    st.info("Assistance coming soon.")
